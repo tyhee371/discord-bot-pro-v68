@@ -155,9 +155,9 @@ module.exports = {
 
       const winners = new TextInputBuilder()
         .setCustomId('winners')
-        .setLabel('Number of winners')
+        .setLabel('Number of winners (optional)')
         .setStyle(TextInputStyle.Short)
-        .setRequired(true)
+        .setRequired(false)
         .setPlaceholder('1')
         .setMaxLength(2);
 
