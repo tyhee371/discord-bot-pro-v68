@@ -1,4 +1,4 @@
-const { logger } = require('../utils/logger');
+const { logger } = require('../helpers/logger');
 
 /**
  * Phase 3: Enhanced Lifecycle Management

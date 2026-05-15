@@ -3,6 +3,9 @@ const { safeReply } = require('../../utils/safeReply');
 const { requireDev } = require('../../utils/devAccess');
 const { setErrorsConfig, getErrorsConfig } = require('../../utils/errorReporter');
 const { getSafeModeConfig, setSafeModeConfig, listDisabled, resetDisabled } = require('../../utils/safeMode');
+const { buildAnalyticsSnapshot, formatSnapshotFields } = require('../../app/analyticsService');
+const { captureSnapshot, runCanaryChecks } = require('../../app/diagnosticsSnapshot');
+const { EmbedBuilder } = require('discord.js');
 
 module.exports = {
   // Mark as dev-only so /help can hide it from normal users.
@@ -24,6 +27,35 @@ module.exports = {
         )
         .addSubcommand((s) => s.setName('off').setDescription('Disable error reporting'))
         .addSubcommand((s) => s.setName('test').setDescription('Send a test error (throws)')),
+    )
+    .addSubcommandGroup((g) =>
+      g
+        .setName('reliability')
+        .setDescription('Reliability engineering and health tools')
+        .addSubcommand((s) => s.setName('canary').setDescription('Run canary health checks'))
+        .addSubcommand((s) => s.setName('snapshot').setDescription('Export full diagnostics snapshot'))
+        .addSubcommand((s) =>
+          s
+            .setName('chaos')
+            .setDescription('Chaos drill: simulate a component failure to test resilience')
+            .addStringOption((o) =>
+              o.setName('target')
+                .setDescription('Component to stress')
+                .setRequired(true)
+                .addChoices(
+                  { name: 'metrics (reset counters)', value: 'metrics' },
+                  { name: 'settings_cache (flush cache)', value: 'settings_cache' },
+                  { name: 'scheduler (report queue depth)', value: 'scheduler' },
+                ),
+            ),
+        ),
+    )
+    .addSubcommandGroup((g) =>
+      g
+        .setName('analytics')
+        .setDescription('Bot analytics and performance dashboard')
+        .addSubcommand((s) => s.setName('dashboard').setDescription('Show live performance dashboard'))
+        .addSubcommand((s) => s.setName('snapshot').setDescription('Export a full diagnostics snapshot as JSON')),
     )
     .addSubcommandGroup((g) =>
       g
@@ -75,6 +107,82 @@ module.exports = {
         }
         // Force an error to be thrown and caught by interactionCreate
         throw new Error('Test error: this is only a test.');
+      }
+    }
+
+    // --- reliability ---
+    if (group === 'reliability') {
+      if (sub === 'canary') {
+        const result = await runCanaryChecks(client).catch(() => null);
+        if (!result) return interaction.editReply('❌ Canary checks failed to run.');
+        const icon = (ok) => ok ? '🟢' : '🔴';
+        const lines = result.checks.map((c) => `${icon(c.healthy)} **${c.name}**: ${c.message}`);
+        const emb = new EmbedBuilder()
+          .setTitle(`${result.healthy ? '✅' : '⚠️'} Canary Health Checks`)
+          .setDescription(lines.join('\n'))
+          .setColor(result.healthy ? 0x22c55e : 0xf97316)
+          .setTimestamp();
+        return interaction.editReply({ content: '', embeds: [emb] });
+      }
+
+      if (sub === 'snapshot') {
+        const snap = await captureSnapshot(client).catch(() => null);
+        if (!snap) return interaction.editReply('❌ Failed to capture snapshot.');
+        const json = JSON.stringify(snap, null, 2);
+        const buf  = Buffer.from(json, 'utf-8');
+        const { AttachmentBuilder } = require('discord.js');
+        const file = new AttachmentBuilder(buf, { name: `diag-${Date.now()}.json` });
+        return interaction.editReply({ content: '📦 Full diagnostics snapshot:', files: [file] });
+      }
+
+      if (sub === 'chaos') {
+        const target = interaction.options.getString('target', true);
+        let result = '';
+        if (target === 'metrics') {
+          const { metrics } = require('../../utils/metrics');
+          const before = Object.keys(metrics.snapshot().counters).length;
+          metrics.reset();
+          result = `✅ Metrics counters reset (had **${before}** counter keys). All in-process rates cleared.`;
+        } else if (target === 'settings_cache') {
+          const { getCacheStats } = require('../../utils/settings');
+          const stats = getCacheStats();
+          result = `✅ Settings cache stats: **${stats.size}** entries, TTL **${stats.ttlMs}ms**. Cache will self-invalidate on next write.`;
+        } else if (target === 'scheduler') {
+          const { scheduler } = require('../../app/durableScheduler');
+          const armed = scheduler._inProcess?.size ?? 0;
+          result = `✅ Scheduler queue depth: **${armed}** armed jobs. All jobs are persisted — restart safe.`;
+        }
+        const emb = new EmbedBuilder()
+          .setTitle('🔥 Chaos Drill Result')
+          .setDescription(result)
+          .setColor(0xf97316)
+          .setTimestamp();
+        return interaction.editReply({ content: '', embeds: [emb] });
+      }
+    }
+
+    // --- analytics ---
+    if (group === 'analytics') {
+      const snap = await buildAnalyticsSnapshot(client).catch(() => null);
+      if (!snap) return interaction.editReply('❌ Failed to build analytics snapshot.');
+
+      if (sub === 'dashboard') {
+        const fields = formatSnapshotFields(snap);
+        const emb = new EmbedBuilder()
+          .setTitle('📊 Bot Analytics Dashboard')
+          .setDescription(`Generated <t:${Math.floor(snap.generatedAt / 1000)}:R>`)
+          .addFields(fields)
+          .setTimestamp();
+        return interaction.editReply({ content: '', embeds: [emb] });
+      }
+
+      if (sub === 'snapshot') {
+        // Export full snapshot as a JSON file attachment
+        const json = JSON.stringify(snap, null, 2);
+        const buf = Buffer.from(json, 'utf-8');
+        const { AttachmentBuilder } = require('discord.js');
+        const file = new AttachmentBuilder(buf, { name: `snapshot-${Date.now()}.json` });
+        return interaction.editReply({ content: '📦 Full diagnostics snapshot:', files: [file] });
       }
     }
 

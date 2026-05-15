@@ -1,5 +1,5 @@
 const { sharedState } = require('./sharedState');
-const { logger } = require('../utils/logger');
+const { logger } = require('../helpers/logger');
 
 /**
  * Phase 4: Rate Limiting and Cooldown System
@@ -37,36 +37,38 @@ class RateLimiter {
     const now = Math.floor(Date.now() / 1000);
     const windowKey = `ratelimit:${key}:${Math.floor(now / windowSeconds)}`;
 
+    // Calculate reset time (end of current window)
+    const resetTime = (Math.floor(now / windowSeconds) + 1) * windowSeconds;
+
     try {
-      // Get current count for this window
-      let currentCount = await sharedState.get('ratelimit', windowKey) || 0;
+      // Atomic INCR: avoids the GET→check→SET race condition where two concurrent
+      // requests both read 0, both decide they're under the limit, and both increment,
+      // causing limit+1 requests to be allowed in the same window.
+      const newCount = await sharedState.increment('ratelimit', windowKey);
 
-      // Check if limit exceeded
-      const allowed = currentCount < limit;
-      const remaining = Math.max(0, limit - currentCount - (allowed ? 1 : 0));
-
-      // Calculate reset time (end of current window)
-      const resetTime = (Math.floor(now / windowSeconds) + 1) * windowSeconds;
-
-      if (allowed) {
-        // Increment counter
-        await sharedState.set('ratelimit', windowKey, currentCount + 1, windowSeconds);
+      // On first increment, set TTL so the key expires at window end.
+      // INCR creates the key if absent; we only need to set TTL once (when count hits 1).
+      if (newCount === 1) {
+        await sharedState.setTTL?.('ratelimit', windowKey, windowSeconds);
       }
+
+      const allowed = newCount <= limit;
+      const remaining = Math.max(0, limit - newCount);
 
       return {
         allowed,
         remaining,
         resetTime,
-        current: currentCount + (allowed ? 1 : 0)
+        current: newCount,
       };
     } catch (error) {
       logger.warn(`[RATE-LIMIT] Error checking limit for ${key}: ${error.message}`);
-      // Allow action on error to avoid blocking users
+      // Fail open — allow action on infrastructure error to avoid blocking users
       return {
         allowed: true,
         remaining: limit - 1,
-        resetTime: now + windowSeconds,
-        current: 1
+        resetTime,
+        current: 1,
       };
     }
   }

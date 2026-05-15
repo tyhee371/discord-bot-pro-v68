@@ -1,0 +1,21 @@
+# docker-compose.dev.yml — Local development overrides
+# Exposes service ports to the host so you can connect from
+# outside Docker (npm run migrate, psql, redis-cli, Prometheus UI, etc.)
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile monitoring up -d
+#
+# This file should NEVER be used in production.
+
+services:
+  redis:
+    ports:
+      - "6379:6379"
+
+  postgres:
+    ports:
+      - "5432:5432"
+
+  prometheus:
+    ports:
+      - "9090:9090"

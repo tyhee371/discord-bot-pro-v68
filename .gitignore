@@ -1,10 +1,41 @@
+# Dependencies
 node_modules/
+
+# Environment / secrets
 .env
-.env.*
-!/.env.example
+.env.local
+.env.*.local
+
+# Database
 database.sqlite
-*.log
+database.sqlite-journal
+*.sqlite
+*.db
+
+# Logs
 logs/
-dist/
-coverage/
+*.log
+
+# Runtime data
+data/
+
+# Binaries
+bin/yt-dlp.exe
+bin/yt-dlp
+*.exe
+
+# YouTube player cache scripts (ytdl artifacts)
+[0-9]*-player-script.js
+
+# YouTube cookies file (contains session tokens — never commit)
+cookies.txt
+*.cookies.txt
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Editor
+.cursor/
+.vscode/
+*.swp

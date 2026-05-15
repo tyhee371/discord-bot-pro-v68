@@ -1,11 +1,15 @@
 const { Client, Collection, GatewayIntentBits, Partials } = require('discord.js');
-const { logger } = require('../utils/logger');
+const { logger } = require('../helpers/logger');
 
 function createContainer() {
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMembers,
+      // GuildPresences is a privileged intent — kept because it's actively used:
+      // - src/commands/utility/user.js: online status display
+      // - src/helpers/staffV2.js: staff online presence routing
+      // If either feature is removed in the future, this intent should be dropped.
       GatewayIntentBits.GuildPresences,
       GatewayIntentBits.GuildVoiceStates,
       GatewayIntentBits.MessageContent,

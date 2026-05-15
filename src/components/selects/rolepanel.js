@@ -6,6 +6,23 @@ function getBuilders(settings) {
   return (b && typeof b === 'object' && !Array.isArray(b)) ? b : {};
 }
 
+// Detect if a role has sensitive administrative permissions that shouldn't be self-assigned
+function isSensitiveRole(role) {
+  if (!role) return false;
+  const sensitivePerms = [
+    PermissionFlagsBits.Administrator,
+    PermissionFlagsBits.ManageGuild,
+    PermissionFlagsBits.ManageRoles,
+    PermissionFlagsBits.ManageChannels,
+    PermissionFlagsBits.KickMembers,
+    PermissionFlagsBits.BanMembers,
+    PermissionFlagsBits.ModerateMembers,
+    PermissionFlagsBits.MoveMembers,
+    PermissionFlagsBits.ManageMessages,
+  ];
+  return sensitivePerms.some(perm => role.permissions.has(perm));
+}
+
 module.exports = {
   id: 'rolepanel',
 
@@ -41,6 +58,17 @@ module.exports = {
     for (const v of selected) {
       if (!roleIds.has(v)) {
         return interaction.reply({ content: '\u26a0\ufe0f One or more selected roles are not part of this panel.', flags: MessageFlags.Ephemeral });
+      }
+    }
+
+    // Validate that sensitive roles are not being self-assigned (security check)
+    for (const roleId of selected) {
+      const role = interaction.guild.roles.cache.get(roleId);
+      if (role && isSensitiveRole(role)) {
+        return interaction.reply({ 
+          content: `\u274c You cannot self-assign the role <@&${roleId}> as it has sensitive administrative permissions. Contact a server admin if you need this role.`, 
+          flags: MessageFlags.Ephemeral 
+        });
       }
     }
 

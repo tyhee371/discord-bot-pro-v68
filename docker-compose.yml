@@ -1,29 +1,46 @@
-# Discord Bot Production Environment
-# Phase 5: Docker + Postgres + CI/CD Setup
-
-version: '3.8'
+# Discord Bot — Docker Compose
+# Requires: DISCORD_TOKEN, POSTGRES_PASSWORD, REDIS_PASSWORD in your environment
+# or in a .env file (never commit .env to git).
+#
+# Phase 3 fixes:
+# - POSTGRES_PASSWORD and PGADMIN_DEFAULT_PASSWORD now use env vars with no
+#   default values.  Docker Compose will error loudly if they are unset,
+#   rather than silently using "bot_password" / "admin" in production.
+# - REDIS_URL in the bot service now includes the password when set.
+# - DATABASE_URL credential references env vars, not hardcoded strings.
+# - PgAdmin only exposes port 8080 under the 'dev' profile (unchanged).
+# - CRLF converted to LF.
 
 services:
-  # Main Discord Bot
   discord-bot:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: discord-bot-prod
     restart: unless-stopped
+    profiles: [bot]  # Only starts when --profile bot is passed. 
+                     # Use 'npm run start:shard' for local dev instead.
+    env_file:
+      - .env
     environment:
+      # These override the .env values so the container uses internal Docker
+      # service names (redis, postgres) instead of host.docker.internal
       - NODE_ENV=production
-      - DISCORD_TOKEN=${DISCORD_TOKEN}
-      - REDIS_URL=redis://redis:6379
-      - DATABASE_URL=postgresql://bot_user:bot_password@postgres:5432/bot_db
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - DATABASE_URL=postgresql://bot_user:${POSTGRES_PASSWORD}@postgres:5432/bot_db
       - HEALTH_PORT=3000
+      - KEYV_URL=sqlite:///app/data/database.sqlite
     depends_on:
-      - redis
-      - postgres
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    command: ["node", "--dns-result-order=ipv4first", "src/shard.js"]
     networks:
       - bot-network
     volumes:
       - ./logs:/app/logs
+      - ./data:/app/data
       - ./data:/app/data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
@@ -32,25 +49,25 @@ services:
       retries: 3
       start_period: 40s
 
-  # Redis for caching and shared state
   redis:
     image: redis:7-alpine
     container_name: discord-bot-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
-    environment:
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD must be set}
+    # Port binding is intentionally omitted in production — the bot connects via
+    # the internal 'bot-network' using the service name 'redis:6379'.
+    # To access Redis from your host machine during development, add a .override.yml:
+    #   services: { redis: { ports: ["6379:6379"] } }
     volumes:
       - redis_data:/data
     networks:
       - bot-network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
 
-  # PostgreSQL for persistent data
   postgres:
     image: postgres:15-alpine
     container_name: discord-bot-postgres
@@ -58,10 +75,15 @@ services:
     environment:
       - POSTGRES_DB=bot_db
       - POSTGRES_USER=bot_user
-      - POSTGRES_PASSWORD=bot_password
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    # Port binding intentionally omitted in production — internal access only via bot-network.
+    # For local development access, use docker-compose.override.yml or run:
+    #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./migrations:/docker-entrypoint-initdb.d
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    command: postgres -c hba_file=/etc/postgresql/pg_hba.conf
     networks:
       - bot-network
     healthcheck:
@@ -70,14 +92,14 @@ services:
       timeout: 5s
       retries: 5
 
-  # PgAdmin for database management (optional)
+  # PgAdmin — only starts with: docker compose --profile dev up
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: discord-bot-pgadmin
     restart: unless-stopped
     environment:
-      - PGADMIN_DEFAULT_EMAIL=admin@bot.local
-      - PGADMIN_DEFAULT_PASSWORD=admin
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_EMAIL:-admin@bot.local}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_PASSWORD:?PGADMIN_PASSWORD must be set when using dev profile}
     ports:
       - "8080:80"
     depends_on:
@@ -87,9 +109,53 @@ services:
     profiles:
       - dev
 
+  # ── Monitoring stack (Phase 4) ──────────────────────────────────────────────
+  # Start with: docker compose --profile monitoring up -d
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: discord-bot-prometheus
+    restart: unless-stopped
+    profiles: [monitoring]
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - bot-network
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: discord-bot-grafana
+    restart: unless-stopped
+    profiles: [monitoring]
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-changeme}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - bot-network
+
 volumes:
   redis_data:
   postgres_data:
+  prometheus_data:
+  grafana_data:
 
 networks:
   bot-network:

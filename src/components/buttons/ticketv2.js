@@ -1,9 +1,11 @@
 
-const { PermissionFlagsBits, MessageFlags, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { PermissionFlagsBits, MessageFlags } = require('discord.js');
 const { getGuildSettings } = require('../../utils/settings');
 const { getTicket, setTicket, deleteTicket } = require('../../services/ticketService');
 const { clearOpenTicketChannelId } = require('../../services/ticketService');
 const { clearTimer } = require('../../services/ticketService');
+const { buildTicketReceiptEmbed, sendTicketReceiptDM } = require('../../utils/ticketReceipt');
+const { stampClosed, buildCloseReceiptEmbed, getSlaMetrics } = require('../../utils/ticketSla');
 
 function isStaff(member, settings) {
   const adminRoleId = settings?.tickets?.adminRoleId ?? null;
@@ -64,12 +66,49 @@ module.exports = {
       }
 
       const openerId = ticket.openerId;
+      const receiptEmbed = buildTicketReceiptEmbed({
+        guildName: interaction.guild?.name || 'this server',
+        channelId: interaction.channelId,
+        closerId: interaction.user.id,
+        openerId,
+        claimedBy: ticket.claimedBy || null,
+        typeLabel: ticket.typeLabel || 'General',
+        openedAt: ticket.createdAt || Date.now(),
+        closedAt: Date.now(),
+      });
+      const dmResult = await sendTicketReceiptDM({
+        client: interaction.client,
+        openerId,
+        embed: receiptEmbed,
+      });
+
+      // Stamp SLA close time and persist
+      const closedTicket = stampClosed(ticket, interaction.user.id);
+      await setTicket(interaction.guildId, interaction.channelId, closedTicket);
+      const slaMetrics = getSlaMetrics(closedTicket);
+
+      // Send SLA receipt to opener DM if we have data
+      if (ticket.openerId && slaMetrics.timeToCloseMs) {
+        const opener = await interaction.guild?.members.fetch(ticket.openerId).catch(() => null);
+        if (opener) {
+          const slaEmb = buildCloseReceiptEmbed({
+            ticket: closedTicket,
+            channelName: interaction.channel?.name ?? 'ticket',
+            guild: interaction.guild,
+          });
+          opener.user.send({ content: `Your ticket in **${interaction.guild?.name}** has been closed.`, embeds: [slaEmb] }).catch(() => {});
+        }
+      }
+
       await deleteTicket(interaction.guildId, interaction.channelId);
       await clearOpenTicketChannelId(interaction.guildId, openerId).catch(() => {});
       clearTimer(interaction.channelId);
 
-      await interaction.reply({ content: '🗑️ Deleting ticket in 3 seconds...' }).catch(() => {});
-      setTimeout(() => interaction.channel.delete('Ticket deleted').catch(() => {}), 3000);
+      const suffix = dmResult.ok
+        ? '\n📩 Receipt sent to the ticket opener via DM.'
+        : '\n⚠️ Could not DM the ticket opener (DMs blocked).';
+      await interaction.reply({ content: `🗑️ Deleting ticket in 3 seconds...${suffix}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+      globalThis.setTimeout(() => interaction.channel.delete('Ticket deleted').catch(() => {}), 3000);
       return;
     }
 

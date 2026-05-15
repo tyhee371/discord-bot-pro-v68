@@ -2,6 +2,7 @@
  * Modal handler for giveaway list actions: end / edit / delete
  * customId: giveawayList_modal:<action>
  */
+const { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, MessageFlags } = require('discord.js');
 const { getGiveaway, saveGiveaway, deleteGiveaway, removeFromIndex } = require('../../utils/giveawayStore');
 const { clearEnd } = require('../../utils/giveawayTimer');
 const { endGiveaway } = require('../../utils/giveawayEnd');
@@ -137,10 +138,6 @@ module.exports = {
               await msg.delete().catch(() => null);
             } else {
               const { buildEndedEmbed } = require('../../utils/giveawayHelpers');
-              const { ButtonBuilder, ButtonStyle, ActionRowBuilder,
-  MessageFlags,
-} = require('discord.js');
-              const { EmbedBuilder } = require('discord.js');
               const cancelEmbed = new EmbedBuilder()
                 .setColor(0xE74C3C)
                 .setTitle(`🚫 ${g.prize} — Giveaway Cancelled`)

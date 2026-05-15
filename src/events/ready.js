@@ -29,6 +29,9 @@ module.exports = {
 
     await runStartupChecks();
     startActivityRotation(client);
+    // _presenceRotationTimer is stored on client for graceful cleanup.
+    // The interval already calls t.unref() so it won't block process exit,
+    // but we clear it explicitly on shutdown via lifecycle.js if needed.
 
     // Restore giveaway end timers after bot restart
     restoreTimers(client).catch(err =>

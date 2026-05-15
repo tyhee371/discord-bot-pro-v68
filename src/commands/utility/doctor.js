@@ -5,6 +5,8 @@ const { getModules } = require('../../utils/modules');
 const { getYtDlpVersion, parseYtDlpVersionDate } = require('../../utils/ytDlp');
 const { safeReply } = require('../../utils/safeReply');
 const { logger } = require('../../utils/logger');
+const { validateConfig, formatValidationResults } = require('../../helpers/configValidator');
+const { getCriticalNamespaces } = require('../../app/storageManifest');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -110,6 +112,26 @@ module.exports = {
 
       // Attach full dependency report
       const file = new AttachmentBuilder(Buffer.from(dep, 'utf-8'), { name: 'voice-deps.txt' });
+
+      // ── Storage namespace diagnostics ───────────────────────────────────
+      try {
+        const criticalNs = getCriticalNamespaces();
+        const nsLines = criticalNs.map((ns) => `\`${ns.prefix}\` — ${ns.description}`).join('\n');
+        emb.addFields({ name: '🗄️ Critical Storage Namespaces', value: nsLines.slice(0, 1024) || 'None', inline: false });
+      } catch {}
+
+      // ── Config validation ──────────────────────────────────────────────
+      try {
+        const validationResults = await validateConfig(guild, settings);
+        const { fields, summary } = formatValidationResults(validationResults);
+        const configEmbed = new EmbedBuilder()
+          .setTitle('⚙️ Configuration Health Check')
+          .setDescription(summary)
+          .addFields(fields.slice(0, 25));
+        return safeReply(interaction, { embeds: [emb, configEmbed], files: [file], ephemeral: true });
+      } catch (cfgErr) {
+        logger.warn({ err: cfgErr }, '[doctor] configValidator failed');
+      }
 
       return safeReply(interaction, { embeds: [emb], files: [file], ephemeral: true });
     } catch (e) {

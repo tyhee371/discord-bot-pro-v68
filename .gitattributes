@@ -1,0 +1,13 @@
+# Enforce LF line endings for all text files
+# This eliminates CRLF artifacts from Windows development
+* text=auto eol=lf
+
+# Explicitly binary — never convert
+*.exe binary
+*.bin binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.sqlite binary

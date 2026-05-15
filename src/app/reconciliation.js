@@ -1,8 +1,9 @@
-const { logger } = require('../utils/logger');
-const { getGuildSettings } = require('../utils/settings');
+const { logger } = require('../helpers/logger');
+const { getGuildSettings } = require('../stores/settings');
 const { getRoom, setRoom, deleteRoom } = require('../services/tempRoomService');
 const { getTicket, setTicket, deleteTicket } = require('../services/ticketService');
 const { getTimer, setTimer, clearTimer } = require('../services/moderationService');
+const { scheduler } = require('./durableScheduler');
 
 /**
  * Phase 3: Startup Reconciliation
@@ -137,6 +138,7 @@ async function reconcileTimers(client) {
     }
 
     logger.info(`[RECONCILE] Timer cleanup complete. Cleaned ${cleanedTimers} timers.`);
+    logger.info(`[RECONCILE] Durable scheduler has ${scheduler._inProcess?.size ?? 0} armed jobs.`);
   } catch (error) {
     logger.error(`[RECONCILE] Timer cleanup failed: ${error.message}`);
   }

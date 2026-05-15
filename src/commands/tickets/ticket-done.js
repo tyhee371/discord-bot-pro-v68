@@ -1,3 +1,4 @@
+const { stampClosed, buildCloseReceiptEmbed } = require('../../utils/ticketSla');
 
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const { getTicket } = require('../../services/ticketService');

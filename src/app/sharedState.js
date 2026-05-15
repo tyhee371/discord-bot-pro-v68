@@ -1,5 +1,5 @@
 const { redisClient } = require('./redis');
-const { logger } = require('../utils/logger');
+const { logger } = require('../helpers/logger');
 
 /**
  * Phase 4: Shared State Manager

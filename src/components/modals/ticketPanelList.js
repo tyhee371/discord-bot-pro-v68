@@ -40,10 +40,19 @@ module.exports = {
     const label = interaction.fields.getTextInputValue('label')?.trim().slice(0, 100);
     const description = interaction.fields.getTextInputValue('description')?.trim().slice(0, 100);
     const value = interaction.fields.getTextInputValue('value')?.trim().slice(0, 100);
+    const emoji = interaction.fields.getTextInputValue('emoji')?.trim();
 
     if (label) opts[idx].label = label;
     if (description !== undefined) opts[idx].description = description;
     if (value) opts[idx].value = value;
+    // Empty string means "clear emoji"; undefined/null means "keep existing"
+    if (emoji !== undefined) {
+      if (emoji === '') {
+        delete opts[idx].emoji;
+      } else {
+        opts[idx].emoji = emoji;
+      }
+    }
 
     const nextSettings = JSON.parse(JSON.stringify(settings));
     nextSettings.tickets.builders[builderId].options = opts;

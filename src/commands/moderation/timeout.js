@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const { parseDuration, formatDuration } = require('../../utils/duration');
-const { requireModLog, createAndSendCase } = require('../../utils/modLogService');
+const { requireModLogStrict: requireModLog, createAndSendCase } = require('../../utils/modLogService');
 
 module.exports = {
   data: new SlashCommandBuilder()

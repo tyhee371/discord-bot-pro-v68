@@ -3,7 +3,7 @@ const { safeDefer } = require('../../utils/safeReply');
 const { addWarn, listWarns, removeWarn, clearWarns, countWarns, getTimer, setTimer, clearTimer } = require('../../services/moderationService');
 const { getGuildSettings, getPath } = require('../../utils/settings');
 const { formatDuration } = require('../../utils/duration');
-const { requireModLog, createAndSendCase } = require('../../utils/modLogService');
+const { createAndSendCase } = require('../../utils/modLogService');
 
 function pickWarnLevel(levels, count) {
   if (!Array.isArray(levels)) return null;
@@ -96,9 +96,6 @@ module.exports = {
 
     // `/warn add` should be visible in-channel; other subcommands are mod-only utilities.
     await safeDefer(interaction, { ephemeral: sub !== 'add' });
-
-    const modLogCh = await requireModLog(interaction);
-    if (!modLogCh) return;
 
     // Read settings once for all subcommands.
     const settings = await getGuildSettings(interaction.guildId);

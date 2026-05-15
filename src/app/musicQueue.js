@@ -1,4 +1,5 @@
-const { logger } = require('../utils/logger');
+const { logger } = require('../helpers/logger');
+const { metrics } = require('../helpers/metrics');
 const { lockManager } = require('./rateLimit');
 
 /**
@@ -41,6 +42,7 @@ class MusicQueueManager {
       const insertIndex = this.operationQueue.findIndex(item => item.priority < priority);
       if (insertIndex === -1) {
         this.operationQueue.push(queueItem);
+        metrics.gauge('music.op_queue.depth', this.operationQueue.length);
       } else {
         this.operationQueue.splice(insertIndex, 0, queueItem);
       }
@@ -65,6 +67,7 @@ class MusicQueueManager {
     try {
       while (this.operationQueue.length > 0 && this.activeOperations.size < this.maxConcurrent) {
         const queueItem = this.operationQueue.shift();
+        metrics.gauge('music.op_queue.depth', this.operationQueue.length);
         clearTimeout(queueItem.timeoutId);
 
         // Check if operation is already running

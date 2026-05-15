@@ -1,11 +1,23 @@
 const { Pool } = require('pg');
-const { logger } = require('../utils/logger');
+const { logger } = require('../helpers/logger');
 
 /**
  * Phase 5: PostgreSQL Database Client
  * Provides persistent data storage for operational data
  */
 
+/**
+ * DATA DOMAIN CONTRACT
+ * ====================
+ * PostgreSQL (this file) = analytics & history only:
+ *   audit_log, ticket_history, music_stats, command_usage,
+ *   ai_moderation_log, rule_engine_log, rate_limit_violations, background_jobs
+ *
+ * SQLite/Keyv (src/db.js) = operational state:
+ *   guild settings, tickets, rooms, warns, giveaways, prison timers, sticky messages
+ *
+ * Do NOT add guild_settings or user_data queries here — those live in Keyv.
+ */
 class DatabaseClient {
   constructor() {
     this.pool = null;
@@ -16,15 +28,72 @@ class DatabaseClient {
    * Initialize database connection
    */
   async connect() {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      logger.info('[DATABASE] DATABASE_URL not set — skipping PostgreSQL connection. Phase 5 analytics disabled.');
+      return;
+    }
+
+    // Retry up to 3 times with a delay — on Windows/Docker the port is reachable
+    // but pg's IPv6-first resolution can cause the first attempt to time out.
+    const MAX_RETRIES = 3;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        await this._tryConnect(connectionString);
+        if (this.isConnected) return;
+      } catch (err) {
+        const msg = err.message || err.errors?.[0]?.message || String(err);
+        if (attempt < MAX_RETRIES) {
+          logger.warn(`[DATABASE] Connect attempt ${attempt}/${MAX_RETRIES} failed: ${msg} — retrying in 3s`);
+          await new Promise(r => setTimeout(r, 3000));
+        } else {
+          logger.warn(`[DATABASE] Could not connect to PostgreSQL after ${MAX_RETRIES} attempts: ${msg}. Phase 5 analytics disabled — bot will continue with SQLite.`);
+          await this.pool?.end().catch(() => {});
+          this.pool = null;
+        }
+      }
+    }
+  }
+
+  async _tryConnect(connectionString) {
     try {
-      const connectionString = process.env.DATABASE_URL || 'postgresql://bot_user:bot_password@localhost:5432/bot_db';
+      // Parse the connection string to extract host, then resolve it to an
+      // explicit IPv4 address. On Windows + Docker Desktop, pg's default DNS
+      // resolution tries IPv6 first (::1) which Docker doesn't forward,
+      // causing every connection to time out before the IPv4 fallback.
+      const { hostname } = new URL(connectionString.replace(/^postgresql/, 'http'));
+      let resolvedHost = hostname;
+      try {
+        const dns = require('node:dns').promises;
+        // Use lookup() not resolve4() — on Windows, resolve4() queries the DNS server
+        // directly (which Docker doesn't support for host.docker.internal), while
+        // lookup() uses the OS hosts file where Docker Desktop registers the entry.
+        const result = await dns.lookup(hostname, { family: 4 });
+        if (result?.address) {
+          resolvedHost = result.address;
+          logger.info(`[DATABASE] Resolved ${hostname} → ${resolvedHost} (IPv4 forced)`);
+        }
+      } catch (_) {
+        // hostname is already an IP or lookup failed — use as-is
+      }
+
+      // Use URL object to replace hostname safely — avoid naive string.replace()
+      // which would corrupt 'postgresql://...' when hostname is 'postgres'
+      // (it would replace the 'postgres' in 'postgresql' too).
+      const urlObj = new URL(connectionString.replace(/^postgresql/, 'http'));
+      urlObj.hostname = resolvedHost;
+      const resolvedUrl = urlObj.toString().replace(/^http/, 'postgresql');
 
       this.pool = new Pool({
-        connectionString,
-        max: 20, // Maximum number of clients in the pool
+        connectionString: resolvedUrl,
+        max: 20,
         idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 2000,
-        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+        connectionTimeoutMillis: 15000,
+        // statement_timeout kills any query that hangs longer than 10s.
+        // Without this, one slow query holds a pool connection for up to 15s.
+        // With max:20 connections, 20 simultaneous slow queries deadlock the pool.
+        options: '--statement_timeout=10000',
+        ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: process.env.PG_REJECT_UNAUTHORIZED !== 'false' } : false,
       });
 
       // Test connection
@@ -50,9 +119,9 @@ class DatabaseClient {
       });
 
     } catch (error) {
-      logger.error(`[DATABASE] Failed to connect to PostgreSQL: ${error.message}`);
-      // Don't throw - allow fallback to file-based storage
+      await this.pool?.end().catch(() => {});
       this.pool = null;
+      throw error;
     }
   }
 
@@ -103,41 +172,6 @@ class DatabaseClient {
       throw error;
     } finally {
       client.release();
-    }
-  }
-
-  /**
-   * Get guild settings
-   */
-  async getGuildSettings(guildId) {
-    try {
-      const result = await this.query(
-        'SELECT settings FROM guild_settings WHERE guild_id = $1',
-        [guildId]
-      );
-      return result.rows[0]?.settings || {};
-    } catch (error) {
-      logger.warn(`[DATABASE] Failed to get guild settings for ${guildId}: ${error.message}`);
-      return {};
-    }
-  }
-
-  /**
-   * Save guild settings
-   */
-  async saveGuildSettings(guildId, settings) {
-    try {
-      await this.query(
-        `INSERT INTO guild_settings (guild_id, settings)
-         VALUES ($1, $2)
-         ON CONFLICT (guild_id)
-         DO UPDATE SET settings = $2, updated_at = NOW()`,
-        [guildId, JSON.stringify(settings)]
-      );
-      return true;
-    } catch (error) {
-      logger.warn(`[DATABASE] Failed to save guild settings for ${guildId}: ${error.message}`);
-      return false;
     }
   }
 

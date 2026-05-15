@@ -1,8 +1,9 @@
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const { requireModLog, updateCaseLogReason } = require('../../utils/modLogService');
-const { getCase, listCasesForUser } = require('../../utils/modCases');
+const { getCase, listCasesForUser, addAppeal } = require('../../utils/modCases');
 const { formatDuration } = require('../../utils/duration');
 const { safeReply } = require('../../utils/safeReply');
+const { getGuildModStats, getUserModStats } = require('../../utils/modStats');
 
 module.exports = {
   ephemeral: true,
@@ -22,6 +23,20 @@ module.exports = {
         .setDescription('List recent cases for a user.')
         .addUserOption((o) => o.setName('user').setDescription('User').setRequired(true))
         .addIntegerOption((o) => o.setName('limit').setDescription('How many (max 20)').setMinValue(1).setMaxValue(20).setRequired(false)),
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('stats')
+        .setDescription('Show moderation action statistics for this server or a user.')
+        .addUserOption((o) => o.setName('user').setDescription('Show stats for a specific user (optional)').setRequired(false))
+        .addIntegerOption((o) => o.setName('days').setDescription('Look back N days (default 30)').setMinValue(1).setMaxValue(365).setRequired(false)),
+    )
+    .addSubcommand((s) =>
+      s
+        .setName('appeal')
+        .setDescription('Record an appeal note on a case.')
+        .addIntegerOption((o) => o.setName('id').setDescription('Case ID').setMinValue(1).setRequired(true))
+        .addStringOption((o) => o.setName('message').setDescription('Appeal message').setRequired(true)),
     )
     .addSubcommand((s) =>
       s
@@ -91,6 +106,62 @@ module.exports = {
       await updateCaseLogReason(interaction.client, interaction.guildId, id, reason, interaction.user);
 
       return interaction.editReply(`✅ Updated reason for case **#${id}**.`);
+    }
+
+    if (sub === 'stats') {
+      const targetUser = interaction.options.getUser('user');
+      const days = interaction.options.getInteger('days') ?? 30;
+
+      if (targetUser) {
+        const stats = await getUserModStats(interaction.guildId, targetUser.id);
+        const lines = Object.entries(stats.counts).map(([type, n]) => `• **${type.toUpperCase()}**: ${n}`);
+        const emb = new EmbedBuilder()
+          .setTitle(`📊 Mod History: ${targetUser.tag}`)
+          .addFields(
+            { name: 'Total Cases', value: String(stats.totalCases), inline: true },
+            { name: 'Appeals Filed', value: String(stats.appealCount), inline: true },
+            { name: 'Last Action', value: stats.latestCase ? `<t:${Math.floor(stats.latestCase.createdAt / 1000)}:R>` : 'None', inline: true },
+            { name: 'Breakdown', value: lines.length ? lines.join('\n') : 'No cases.', inline: false },
+          );
+        return interaction.editReply({ embeds: [emb] });
+      }
+
+      // Guild-wide stats
+      await interaction.editReply({ content: `📊 Calculating stats for the last **${days}** days…` });
+      const stats = await getGuildModStats(interaction.guildId, { days });
+      const typeLine = Object.entries(stats.counts).map(([t, n]) => `• **${t.toUpperCase()}**: ${n}`).join('\n') || 'None';
+      const modLine = stats.topMods.map((m, i) => `${i + 1}. <@${m.id}> (${m.count})`).join('\n') || 'None';
+      const targetLine = stats.topTargets.map((t, i) => `${i + 1}. <@${t.id}> (${t.count})`).join('\n') || 'None';
+
+      const emb = new EmbedBuilder()
+        .setTitle(`📊 Server Mod Stats — Last ${days} Days`)
+        .addFields(
+          { name: 'Total Actions', value: String(stats.total), inline: true },
+          { name: 'Unique Action Types', value: String(Object.keys(stats.counts).length), inline: true },
+          { name: '​', value: '​', inline: true },
+          { name: 'By Type', value: typeLine, inline: false },
+          { name: 'Top Moderators', value: modLine, inline: true },
+          { name: 'Most Actioned Users', value: targetLine, inline: true },
+        )
+        .setFooter({ text: `Based on indexed cases in the last ${days} days` })
+        .setTimestamp();
+
+      return interaction.editReply({ content: '', embeds: [emb] });
+    }
+
+    if (sub === 'appeal') {
+      const id = interaction.options.getInteger('id', true);
+      const message = interaction.options.getString('message', true);
+
+      const appealCase = await getCase(interaction.guildId, id);
+      if (!appealCase) return interaction.editReply(`❌ Case **#${id}** not found.`);
+
+      await addAppeal(interaction.guildId, id, {
+        userId: interaction.user.id,
+        message: message.slice(0, 1800),
+      });
+
+      return interaction.editReply(`✅ Appeal recorded on case **#${id}**.`);
     }
 
     return safeReply(interaction, { ephemeral: true, content: 'Unknown subcommand.' });

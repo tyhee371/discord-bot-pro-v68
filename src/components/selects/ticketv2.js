@@ -1,3 +1,4 @@
+const { stampOpened } = require('../../utils/ticketSla');
 
 const {
   ChannelType,
@@ -107,24 +108,27 @@ module.exports = {
 
     await setOpenTicketChannelId(interaction.guildId, interaction.user.id, channel.id);
 
+    const now = Date.now();
     await setTicket(interaction.guildId, channel.id, {
       openerId: interaction.user.id,
       messageId: null,
       typeLabel,
       typeValue,
       categoryId: category.id,
-      createdAt: Date.now(),
+      createdAt: now,
       claimedBy: null,
+      sla: { openedAt: now },
     });
 
     const embed = new EmbedBuilder()
       .setTitle(`Ticket: ${typeLabel}`)
-      .setDescription('A staff member will claim your ticket soon. Please describe your issue.');
+      .setDescription(
+        'A staff member will claim your ticket soon. Please describe your issue.\n\n' +
+        'When the ticket is resolved, staff should run `/ticket-done` to post close/delete controls.',
+      );
 
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId('ticketv2:claim').setLabel('Claim Ticket').setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId('ticketv2:close').setLabel('Close').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('ticketv2:delete').setLabel('Delete').setStyle(ButtonStyle.Danger),
     );
 
     const ticketMsg = await channel.send({ content: `${interaction.user}`, embeds: [embed], components: [row] });

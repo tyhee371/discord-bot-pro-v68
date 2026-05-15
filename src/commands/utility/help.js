@@ -7,7 +7,7 @@ const {
 } = require('discord.js');
 
 const { getPrefix } = require('../../utils/prefixStore');
-const { buildPrefixHelpEmbeds } = require('../../utils/helpBuilder');
+const { buildAllHelpEmbeds: buildAllHelpEmbedsFromManifest } = require('../../utils/helpBuilder');
 const { privacyPolicyUrl, termsUrl } = require('../../config');
 
 function normalizeUrl(url) {
@@ -66,58 +66,11 @@ function buildHelpLinkButtons() {
 }
 
 /**
- * Build slash command help embeds by reading registered commands from Discord.
- * Shows top-level slash commands (name + description), 10 per embed.
- */
-async function buildSlashHelpEmbeds({ client, guild }) {
-  try {
-    const coll = guild?.commands
-      ? await guild.commands.fetch()
-      : await client.application?.commands.fetch();
-
-    const cmds = coll ? [...coll.values()] : [];
-    if (!cmds.length) {
-      return [
-        new EmbedBuilder()
-          .setTitle('Slash commands')
-          .setDescription('No slash commands found (or I could not fetch them).'),
-      ];
-    }
-
-    const lines = cmds
-      .filter((c) => c && c.name)
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((c) => `• \`/${c.name}\` — ${c.description || 'No description'}`);
-
-    return chunk(lines, 10).map((page, i, arr) =>
-      new EmbedBuilder()
-        .setTitle(`Slash commands (${i + 1}/${arr.length})`)
-        .setDescription(page.join('\n')),
-    );
-  } catch {
-    return [
-      new EmbedBuilder()
-        .setTitle('Slash commands')
-        .setDescription('I could not load slash commands right now.'),
-    ];
-  }
-}
-
-/**
- * Build prefix command help embeds.
- */
-function buildPrefixEmbeds(prefix) {
-  return buildPrefixHelpEmbeds(prefix);
-}
-
-/**
  * Build ALL help embeds: slash + prefix.
  * This is used by both /help and !help.
  */
-async function buildAllHelpEmbeds({ client, guild, prefix }) {
-  const slashEmbeds = await buildSlashHelpEmbeds({ client, guild });
-  const prefixEmbeds = buildPrefixEmbeds(prefix);
-  return [...slashEmbeds, ...prefixEmbeds];
+async function buildAllHelpEmbeds({ client, prefix, member, userId }) {
+  return buildAllHelpEmbedsFromManifest({ client, prefix, member, userId });
 }
 
 module.exports = {
@@ -136,8 +89,9 @@ module.exports = {
     const prefix = await getPrefix(interaction.guildId);
     const allEmbeds = await buildAllHelpEmbeds({
       client: interaction.client,
-      guild: interaction.guild,
       prefix,
+      member: interaction.member,
+      userId: interaction.user.id,
     });
 
     // Discord allows max 10 embeds per message.

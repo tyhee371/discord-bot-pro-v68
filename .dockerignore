@@ -1,0 +1,41 @@
+# Dependencies — installed fresh inside container
+node_modules/
+
+# Git history — not needed in image
+.git/
+.gitignore
+.gitattributes
+
+# Local dev files
+.env
+.env.*
+.cursor/
+
+# Logs and runtime data
+logs/
+*.log
+data/
+database.sqlite
+database.sqlite-journal
+
+# Windows binaries — not used on Linux
+bin/yt-dlp.exe
+*.exe
+
+# ytdl player cache artifacts
+1777*-player-script.js
+
+# Dev/test files — not needed in production image
+test/
+tests/
+.github/
+monitoring/
+docker-compose*.yml
+*.md
+DEPLOYMENT.md
+MAINTENANCE.md
+STRUCTURE.md
+
+# Editor
+.vscode/
+*.swp

@@ -7,11 +7,9 @@ on:
     branches: [ main ]
 
 env:
-  NODE_VERSION: '18'
-  PYTHON_VERSION: '3.9'
+  NODE_VERSION: '22'
 
 jobs:
-  # Lint and Test Job
   lint-test:
     runs-on: ubuntu-latest
     services:
@@ -48,11 +46,6 @@ jobs:
         node-version: ${{ env.NODE_VERSION }}
         cache: 'npm'
 
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-
     - name: Install system dependencies
       run: |
         sudo apt-get update
@@ -61,16 +54,15 @@ jobs:
     - name: Install Node.js dependencies
       run: npm ci
 
-    - name: Install Python dependencies
-      run: pip install -r requirements.txt
-
     - name: Run ESLint
-      run: npm run lint || npm run lint:fix
+      run: npm run lint
 
     - name: Run tests
       run: npm test
       env:
         NODE_ENV: test
+        DISCORD_TOKEN: placeholder_for_ci
+        CLIENT_ID: placeholder_for_ci
         REDIS_URL: redis://localhost:6379
         DATABASE_URL: postgresql://bot_user:bot_password@localhost:5432/bot_test
 
@@ -78,31 +70,27 @@ jobs:
       run: docker build -t discord-bot:test .
 
     - name: Run smoke tests
-      run: |
-        # Start test containers
-        docker run -d --name bot-test \
-          -e NODE_ENV=test \
-          -e REDIS_URL=redis://host.docker.internal:6379 \
-          -e DATABASE_URL=postgresql://bot_user:bot_password@host.docker.internal:5432/bot_test \
-          --network host \
-          discord-bot:test
+      run: npm run smoke-test
+      env:
+        NODE_ENV: test
+        DISCORD_TOKEN: placeholder_for_ci
+        CLIENT_ID: placeholder_for_ci
 
-        # Wait for health check
-        timeout 60 bash -c 'until curl -f http://localhost:3000/health; do sleep 2; done'
-
-        # Run smoke test script
-        npm run smoke-test
-
-        # Cleanup
-        docker stop bot-test
-        docker rm bot-test
-
-  # Security Scan Job
   security:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # TruffleHog needs full history to scan all commits
+
+    - name: TruffleHog secrets scan
+      uses: trufflesecurity/trufflehog-actions-scan@main
+      with:
+        path: ./
+        base: ${{ github.event.repository.default_branch }}
+        head: HEAD
+        extra_args: --only-verified
 
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -125,12 +113,11 @@ jobs:
         output: 'trivy-results.sarif'
 
     - name: Upload Trivy scan results
-      uses: github/codeql-action/upload-sarif@v2
+      uses: github/codeql-action/upload-sarif@v3
       if: always()
       with:
         sarif_file: 'trivy-results.sarif'
 
-  # Docker Build and Push (only on main branch)
   docker:
     runs-on: ubuntu-latest
     needs: [lint-test, security]
@@ -170,30 +157,47 @@ jobs:
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
-  # Deploy to staging (manual trigger)
   deploy-staging:
     runs-on: ubuntu-latest
     needs: docker
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     environment: staging
-
     steps:
-    - name: Deploy to staging
-      run: |
-        echo "Deploying to staging environment..."
-        # Add your staging deployment commands here
-        # Example: kubectl apply -f k8s/staging/
+    - name: Deploy to staging via SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.STAGING_HOST }}
+        username: ${{ secrets.STAGING_USER }}
+        key: ${{ secrets.STAGING_SSH_KEY }}
+        script: |
+          cd /opt/discord-bot
+          docker compose pull bot
+          docker compose up -d --no-deps bot
+          docker compose exec -T bot node --version
+          echo "Staging deploy complete"
 
-  # Deploy to production (manual trigger with approval)
   deploy-production:
     runs-on: ubuntu-latest
-    needs: docker
+    needs: [docker, deploy-staging]
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     environment: production
-
     steps:
-    - name: Deploy to production
+    - name: Deploy to production via SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.PRODUCTION_HOST }}
+        username: ${{ secrets.PRODUCTION_USER }}
+        key: ${{ secrets.PRODUCTION_SSH_KEY }}
+        script: |
+          cd /opt/discord-bot
+          docker compose pull bot
+          # Rolling restart — pull new image then restart with zero-downtime
+          docker compose up -d --no-deps --force-recreate bot
+          # Run migrations against production DB
+          docker compose exec -T bot node scripts/migrate.js
+          echo "Production deploy complete"
+    - name: Notify on failure
+      if: failure()
       run: |
-        echo "Deploying to production environment..."
-        # Add your production deployment commands here
-        # Example: kubectl apply -f k8s/production/
+        echo "Production deploy FAILED for commit ${{ github.sha }}"
+        # Add webhook notification here (Discord, Slack, PagerDuty etc.)

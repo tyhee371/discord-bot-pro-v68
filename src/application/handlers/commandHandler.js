@@ -5,6 +5,7 @@ const { getPublicMessage } = require('../../shared/errors');
 const { handlePrefixMessage: handlePrefixRoute } = require('../prefix/prefixRouter');
 const { reportInteractionError, reportSafeModeDisabled } = require('../../utils/errorReporter');
 const { recordFailure } = require('../../utils/safeMode');
+const { metrics } = require('../../utils/metrics');
 
 async function handleInteraction(client, interaction) {
   if (!interaction?.isChatInputCommand?.()) return;
@@ -22,6 +23,8 @@ async function handleInteraction(client, interaction) {
 
   try {
     await command.execute(interaction, client);
+    metrics.increment('commands.executed', { command: interaction.commandName });
+    metrics.rate('commands.slash');
   } catch (err) {
     const guildId = interaction.guildId;
     try {

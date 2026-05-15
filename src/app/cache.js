@@ -1,5 +1,5 @@
 const { sharedState } = require('./sharedState');
-const { logger } = require('../utils/logger');
+const { logger } = require('../helpers/logger');
 
 /**
  * Phase 4: Cache Manager for Expensive Operations
@@ -108,9 +108,50 @@ class CacheManager {
    * Clear all cache entries matching pattern
    */
   async clearPattern(pattern) {
-    // Note: This is a simplified implementation
-    // In production, you'd want Redis SCAN or similar
-    logger.debug(`[CACHE] Clear pattern ${pattern} not fully implemented`);
+    // Memory cache: iterate and delete matching keys
+    let memCleared = 0;
+    const memPattern = `cache:${pattern}`;
+    const isGlob = memPattern.includes('*');
+    for (const key of this.memoryCache.keys()) {
+      const matches = isGlob
+        ? key.startsWith(memPattern.replace('*', ''))
+        : key === memPattern;
+      if (matches) {
+        this.memoryCache.delete(key);
+        memCleared++;
+      }
+    }
+
+    // Redis: use SCAN (non-blocking, cursor-based) instead of KEYS (blocks server)
+    if (sharedState.redisAvailable) {
+      try {
+        const { redisClient } = require('./redis');
+        const redisPattern = `bot:cache:${pattern}`;
+        let cursor = 0;
+        let totalDeleted = 0;
+        do {
+          const [nextCursor, keys] = await redisClient.client.scan(cursor, {
+            MATCH: redisPattern,
+            COUNT: 100,
+          });
+          cursor = Number(nextCursor);
+          if (keys.length > 0) {
+            await redisClient.client.del(keys);
+            totalDeleted += keys.length;
+          }
+        } while (cursor !== 0);
+
+        if (totalDeleted > 0) {
+          logger.debug(`[CACHE] SCAN cleared ${totalDeleted} Redis keys matching ${redisPattern}`);
+        }
+      } catch (err) {
+        logger.debug(`[CACHE] Redis SCAN clearPattern failed for ${pattern}: ${err.message}`);
+      }
+    }
+
+    if (memCleared > 0) {
+      logger.debug(`[CACHE] Cleared ${memCleared} memory cache entries matching ${pattern}`);
+    }
   }
 
   /**

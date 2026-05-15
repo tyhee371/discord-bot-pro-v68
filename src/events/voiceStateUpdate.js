@@ -9,6 +9,16 @@ const {
 } = require('discord.js');
 
 const { getGuildSettings } = require('../utils/settings');
+const { Debouncer } = require('../utils/debouncer');
+const { metrics } = require('../utils/metrics');
+const { AsyncLock } = require('../utils/asyncLock');
+
+// Debounce room-empty deletions per channel (500 ms) to absorb rapid
+// leave/rejoin events (e.g. voice disconnect blip, switching channels).
+const _roomDebouncer = new Debouncer(500);
+// Serialise room-creation per guild so two members joining the master
+// channel within the same tick don't race on category/channel creation.
+const _roomCreateLock = new AsyncLock();
 const { defaultRoomData, getRoom, setRoom, deleteRoom } = require('../services/tempRoomService');
 const { buildRoomEmbed, buildRoomButtons } = require('../utils/roomPanel');
 
@@ -276,7 +286,9 @@ module.exports = {
 
     // Joined master -> create room (ALLOW MULTIPLE ROOMS PER USER)
     if (newChannel && masterId && newChannel.id === masterId) {
-      await createRoomFor(newState.member, settings).catch(console.error);
+      await _roomCreateLock.run(`room-create:${guild.id}`, () =>
+        createRoomFor(newState.member, settings)
+      ).catch(console.error);
     }
 
     // Owner left a temp room while others remain -> show claim panel
@@ -291,7 +303,11 @@ module.exports = {
         }
       }
 
-      await maybeDeleteEmptyRoom(oldChannel, guild.id).catch(console.error);
+      metrics.rate('events.voice_state');
+      _roomDebouncer.schedule(
+        `room-delete:${guild.id}:${oldChannel.id}`,
+        () => maybeDeleteEmptyRoom(oldChannel, guild.id).catch(console.error),
+      );
     }
 
     // Owner reconnected to their room -> update claim message

@@ -46,9 +46,16 @@ module.exports = {
         .setStyle(TextInputStyle.Short)
         .setRequired(false);
 
+      const emoji = new TextInputBuilder()
+        .setCustomId('emoji')
+        .setLabel('Emoji (unicode 🎫 or custom <:name:id>, blank = keep)')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false);
+
       modal.addComponents(new ActionRowBuilder().addComponents(label));
       modal.addComponents(new ActionRowBuilder().addComponents(description));
       modal.addComponents(new ActionRowBuilder().addComponents(value));
+      modal.addComponents(new ActionRowBuilder().addComponents(emoji));
     }
 
     return interaction.showModal(modal);

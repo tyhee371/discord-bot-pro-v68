@@ -96,11 +96,25 @@ function buildSelectRow(builderId, options) {
   const menu = new StringSelectMenuBuilder()
     .setCustomId(`ticketv2:select:${builderId}`)
     .setPlaceholder('Select a ticket type')
-    .addOptions(options.map(o => ({
-      label: o.label,
-      description: o.description?.slice(0, 100) || undefined,
-      value: o.value,
-    })));
+    .addOptions(options.map(o => {
+      const opt = {
+        label: o.label,
+        description: o.description?.slice(0, 100) || undefined,
+        value: o.value,
+      };
+      // Add emoji if set — supports unicode emoji and custom Discord emoji IDs
+      if (o.emoji) {
+        // Custom emoji format: <:name:id> or <a:name:id>
+        const customMatch = String(o.emoji).match(/^<a?:[\w]+:(\d+)>$/);
+        if (customMatch) {
+          opt.emoji = { id: customMatch[1] };
+        } else {
+          // Unicode emoji — pass directly
+          opt.emoji = { name: o.emoji };
+        }
+      }
+      return opt;
+    }));
 
   return new ActionRowBuilder().addComponents(menu);
 }
@@ -168,6 +182,7 @@ module.exports = {
         .addStringOption(o => o.setName('builder_id').setDescription('Builder id (required if multiple builders exist).').setRequired(false))
         .addStringOption(o => o.setName('description').setDescription('Option description').setRequired(false))
         .addStringOption(o => o.setName('value').setDescription('Optional value/id (auto if omitted).').setRequired(false))
+        .addStringOption(o => o.setName('emoji').setDescription('Optional emoji (unicode e.g. 🎫 or custom e.g. <:name:id>)').setRequired(false))
     )
     .addSubcommand(s =>
       s.setName('panel-remove')
@@ -343,6 +358,7 @@ module.exports = {
       const label = interaction.options.getString('label', true).trim().slice(0, 100);
       const description = (interaction.options.getString('description') || '').trim().slice(0, 100);
       const valueIn = (interaction.options.getString('value') || '').trim();
+      const emoji = (interaction.options.getString('emoji') || '').trim();
 
       const existingValues = (Array.isArray(builder.options) ? builder.options : []).map(o => o.value);
       const base = valueIn ? slugify(valueIn) : slugify(label);
@@ -351,12 +367,15 @@ module.exports = {
       const namespacedBase = `${builderId}__${base}`;
       const value = uniqueValue(namespacedBase, existingValues);
 
-      const nextOptions = [...(builder.options || []), { label, description, value }];
+      const newOption = { label, description, value };
+      if (emoji) newOption.emoji = emoji;
+      const nextOptions = [...(builder.options || []), newOption];
       const nextBuilder = { ...builder, options: nextOptions, updatedAt: Date.now() };
       builders = { ...builders, [builderId]: nextBuilder };
 
       await setGuildSettings(guildId, { tickets: { builders } });
-      return replyOrEdit(interaction, { content: `✅ Added option **${label}** to builder \`${builderId}\` (value: \`${value}\`).`, ephemeral: true });
+      const emojiNote = emoji ? ` emoji: ${emoji}` : '';
+      return replyOrEdit(interaction, { content: `✅ Added option **${label}** to builder \`${builderId}\` (value: \`${value}\`${emojiNote}).`, ephemeral: true });
     }
 
     if (sub === 'panel-remove') {
@@ -392,6 +411,7 @@ module.exports = {
         const lines = opts.length
           ? opts.map((o, idx) => {
               const bits = [`\`${idx + 1}\` • **${o.label || '(no label)'}**`];
+              if (o.emoji) bits.push(o.emoji);
               if (o.description) bits.push(`— ${o.description}`);
               if (o.value) bits.push(`— value: \`${o.value}\``);
               return bits.join(' ');

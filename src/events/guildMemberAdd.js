@@ -1,5 +1,6 @@
 
 const { Events, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { runRules } = require('../utils/ruleEngine');
 const { getGuildSettings } = require('../utils/settings');
 const { applyPlaceholders } = require('../utils/placeholders');
 
@@ -112,5 +113,7 @@ if (footerEnabled) {
     } catch (err) {
       console.error(`[GREET] Failed to send greeting in guild ${member.guild.id}:`, err);
     }
+    // ── Automation rules ──────────────────────────────────────────────────
+    if (member.guild) runRules(member.guild.id, 'member_join', { guild: member.guild, member, client }).catch(() => {});
   },
 };

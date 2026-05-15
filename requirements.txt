@@ -10,7 +10,15 @@
 #
 # Install:
 #   1) In the bot folder, run:
-#        npm install
+        # 1. Start infrastructure only (no bot container)
+#       docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile monitoring up -d
+
+#       2. Migrate
+#       docker exec discord-bot-prod node scripts/migrate.js
+#       (if container not running: npm run migrate instead)
+
+#       3. Start bot
+#       npm run start:shard
 #   2) Copy .env.example to .env and fill in your values
 #   3) Deploy commands (recommended for testing):
 #        npm run deploy:guild

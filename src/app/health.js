@@ -1,6 +1,9 @@
 const http = require('http');
-const { logger } = require('../utils/logger');
+const { logger } = require('../helpers/logger');
 const { getHealthStatus, getReadinessStatus } = require('./lifecycle');
+const { metrics } = require('../helpers/metrics');
+const { buildAnalyticsSnapshot } = require('./analyticsService');
+const { runCanaryChecks } = require('./diagnosticsSnapshot');
 
 /**
  * Phase 3: Health Check Endpoints
@@ -81,9 +84,18 @@ class HealthServer {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             service: 'discord-bot',
-            endpoints: ['/health', '/ready', '/readiness'],
+            endpoints: ['/health', '/ready', '/readiness', '/metrics', '/analytics', '/canary'],
             version: 'v68'
           }));
+          break;
+        case '/metrics':
+          this.handleMetrics(res, req);
+          break;
+        case '/analytics':
+          this.handleAnalytics(res);
+          break;
+        case '/canary':
+          this.handleCanary(res);
           break;
         default:
           res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -118,6 +130,76 @@ class HealthServer {
     const statusCode = readiness.ready ? 200 : 503;
     res.writeHead(statusCode, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(readiness));
+  }
+
+  /**
+   * Handle /metrics endpoint — in-process counters, gauges, and event rates.
+   * Returns the current metrics snapshot as JSON.
+   */
+  async handleCanary(res) {
+    try {
+      const result = await runCanaryChecks(this.client);
+      const statusCode = result.healthy ? 200 : 503;
+      res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result, null, 2));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Canary checks failed' }));
+    }
+  }
+
+  async handleAnalytics(res) {
+    try {
+      const snap = await buildAnalyticsSnapshot(this.client);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(snap, null, 2));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to build analytics snapshot' }));
+    }
+  }
+
+  handleMetrics(res, req) {
+    const accept = req?.headers?.accept ?? '';
+    const wantsJson = accept.includes('application/json');
+    const snapshot = metrics.snapshot();
+
+    if (wantsJson) {
+      // JSON format for browser/debug access
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(snapshot, null, 2));
+      return;
+    }
+
+    // Default: Prometheus text exposition format (v0.0.4)
+    // Prometheus scraper does not send Accept headers, so always default to this format.
+    const lines = [];
+    const ts = Date.now();
+
+    lines.push('# HELP bot_uptime_seconds Seconds since bot process started');
+    lines.push('# TYPE bot_uptime_seconds gauge');
+    lines.push('bot_uptime_seconds ' + snapshot.uptimeSeconds + ' ' + ts);
+
+    for (const [key, value] of Object.entries(snapshot.counters || {})) {
+      const metricName = 'bot_' + key.replace(/[^a-zA-Z0-9_]/g, '_');
+      lines.push('# TYPE ' + metricName + '_total counter');
+      lines.push(metricName + '_total ' + value + ' ' + ts);
+    }
+
+    for (const [key, value] of Object.entries(snapshot.gauges || {})) {
+      const metricName = 'bot_' + key.replace(/[^a-zA-Z0-9_]/g, '_');
+      lines.push('# TYPE ' + metricName + ' gauge');
+      lines.push(metricName + ' ' + value + ' ' + ts);
+    }
+
+    for (const [key, value] of Object.entries(snapshot.rates || {})) {
+      const metricName = 'bot_' + key.replace(/[^a-zA-Z0-9_]/g, '_') + '_per_min';
+      lines.push('# TYPE ' + metricName + ' gauge');
+      lines.push(metricName + ' ' + value + ' ' + ts);
+    }
+
+    res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
+    res.end(lines.join('\n') + '\n');
   }
 }
 

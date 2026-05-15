@@ -1,4 +1,4 @@
-﻿const musicUtil = require('../utils/musicService');
+const musicUtil = require('../utils/audioEngine');
 const { musicQueueManager } = require('../app/musicQueue');
 const { logger } = require('../utils/logger');
 

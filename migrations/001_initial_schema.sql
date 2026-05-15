@@ -1,11 +1,10 @@
 -- Discord Bot Database Schema
--- Phase 5: PostgreSQL migrations for persistent data
+-- PostgreSQL-compatible migration
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Guild Settings Table
--- Stores persistent guild configuration
+-- Guild Settings
 CREATE TABLE IF NOT EXISTS guild_settings (
     guild_id BIGINT PRIMARY KEY,
     settings JSONB NOT NULL DEFAULT '{}',
@@ -13,8 +12,7 @@ CREATE TABLE IF NOT EXISTS guild_settings (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- User Data Table
--- Stores user-specific persistent data
+-- User Data
 CREATE TABLE IF NOT EXISTS user_data (
     user_id BIGINT PRIMARY KEY,
     data JSONB NOT NULL DEFAULT '{}',
@@ -22,21 +20,19 @@ CREATE TABLE IF NOT EXISTS user_data (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Audit Log Table
--- Stores moderation actions and bot events
+-- Audit Log
 CREATE TABLE IF NOT EXISTS audit_log (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     guild_id BIGINT NOT NULL,
     user_id BIGINT,
     action VARCHAR(100) NOT NULL,
     details JSONB NOT NULL DEFAULT '{}',
-    timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    INDEX idx_audit_guild_time (guild_id, timestamp),
-    INDEX idx_audit_user (user_id)
+    timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_audit_guild_time ON audit_log (guild_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log (user_id);
 
--- Ticket History Table
--- Stores ticket lifecycle events
+-- Ticket History
 CREATE TABLE IF NOT EXISTS ticket_history (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     ticket_id VARCHAR(50) NOT NULL,
@@ -48,14 +44,13 @@ CREATE TABLE IF NOT EXISTS ticket_history (
     category VARCHAR(100),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     closed_at TIMESTAMP WITH TIME ZONE,
-    transcript TEXT,
-    INDEX idx_ticket_guild (guild_id),
-    INDEX idx_ticket_creator (creator_id),
-    INDEX idx_ticket_status (status)
+    transcript TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_ticket_guild ON ticket_history (guild_id);
+CREATE INDEX IF NOT EXISTS idx_ticket_creator ON ticket_history (creator_id);
+CREATE INDEX IF NOT EXISTS idx_ticket_status ON ticket_history (status);
 
--- Music Statistics Table
--- Stores music playback statistics
+-- Music Statistics
 CREATE TABLE IF NOT EXISTS music_stats (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     guild_id BIGINT NOT NULL,
@@ -63,14 +58,13 @@ CREATE TABLE IF NOT EXISTS music_stats (
     track_url TEXT NOT NULL,
     track_title VARCHAR(500),
     duration_seconds INTEGER,
-    played_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    INDEX idx_music_guild (guild_id),
-    INDEX idx_music_user (user_id),
-    INDEX idx_music_played (played_at)
+    played_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_music_guild ON music_stats (guild_id);
+CREATE INDEX IF NOT EXISTS idx_music_user ON music_stats (user_id);
+CREATE INDEX IF NOT EXISTS idx_music_played ON music_stats (played_at);
 
--- Command Usage Table
--- Tracks command usage for analytics
+-- Command Usage
 CREATE TABLE IF NOT EXISTS command_usage (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     guild_id BIGINT,
@@ -79,28 +73,26 @@ CREATE TABLE IF NOT EXISTS command_usage (
     args TEXT,
     success BOOLEAN NOT NULL DEFAULT true,
     error_message TEXT,
-    executed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    INDEX idx_command_guild (guild_id),
-    INDEX idx_command_user (user_id),
-    INDEX idx_command_name (command),
-    INDEX idx_command_executed (executed_at)
+    executed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_command_guild ON command_usage (guild_id);
+CREATE INDEX IF NOT EXISTS idx_command_user ON command_usage (user_id);
+CREATE INDEX IF NOT EXISTS idx_command_name ON command_usage (command);
+CREATE INDEX IF NOT EXISTS idx_command_executed ON command_usage (executed_at);
 
--- Rate Limit Violations Table
--- Tracks rate limit violations for monitoring
+-- Rate Limit Violations
 CREATE TABLE IF NOT EXISTS rate_limit_violations (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     identifier VARCHAR(200) NOT NULL,
     action VARCHAR(100) NOT NULL,
     violations INTEGER NOT NULL DEFAULT 1,
     first_violation TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    last_violation TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    INDEX idx_rate_identifier (identifier),
-    INDEX idx_rate_action (action)
+    last_violation TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_rate_identifier ON rate_limit_violations (identifier);
+CREATE INDEX IF NOT EXISTS idx_rate_action ON rate_limit_violations (action);
 
--- Background Job Status Table
--- Tracks long-running background jobs
+-- Background Jobs
 CREATE TABLE IF NOT EXISTS background_jobs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     job_type VARCHAR(100) NOT NULL,
@@ -109,12 +101,12 @@ CREATE TABLE IF NOT EXISTS background_jobs (
     progress JSONB DEFAULT '{}',
     started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     completed_at TIMESTAMP WITH TIME ZONE,
-    error_message TEXT,
-    INDEX idx_job_type (job_type),
-    INDEX idx_job_status (status)
+    error_message TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_job_type ON background_jobs (job_type);
+CREATE INDEX IF NOT EXISTS idx_job_status ON background_jobs (status);
 
--- Create updated_at trigger function
+-- Auto-update updated_at trigger
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -123,11 +115,12 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
--- Add updated_at triggers
+DROP TRIGGER IF EXISTS update_guild_settings_updated_at ON guild_settings;
 CREATE TRIGGER update_guild_settings_updated_at
     BEFORE UPDATE ON guild_settings
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_user_data_updated_at ON user_data;
 CREATE TRIGGER update_user_data_updated_at
     BEFORE UPDATE ON user_data
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

@@ -1,0 +1,12 @@
+{
+    "client_id": "2ba1aca908664ac7b8838c56711d1e64",
+    "client_secret": "bcb9de718f924ed3b59b8ddb5ea73f67",
+    "redirect_url": "http://127.0.0.1:8888/callback",
+    "access_token": "BQAMVa3l_M61J0sL7P2ZzkWKuJNLxbeT0Rf_jaQ0v138pkZ668H0jcxRwgC2FqjdBz0ohTtUJMZ9xm9Jxmvs-VM7CyXue1ZWGCU7vN9smWvUGlZsIhjj0TthroIUE9V226nGn-lJPbwMjwnoUlmNXwPxRSLQFGHAZZEwBNm9Hn12aAg5vYyuBtarB5rqgVQt5VT4SEGYv_KD_vMnoFUzR8B6ODwZtjmcebpxKgTtGukEaCA",
+    "refresh_token": "AQAr1nIMHSA6SdOrVS4iBwghzlMb2hH2zQ7oZwH-DLF1f0Bf8CsRtM8HJ-50apVbcdmF7_w1yTT9z1wurgtUD982TxeZ2ouTgCoqvEhVu0Yb6xfXCq3rlFRoUhrcwe92ImI",
+    "expires_in": 3600,
+    "expiry": 1778543145494,
+    "token_type": "Bearer",
+    "market": "VN",
+    "file": true
+}
