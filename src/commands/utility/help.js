@@ -2,12 +2,17 @@ const {
   SlashCommandBuilder,
   EmbedBuilder,
   ActionRowBuilder,
+  StringSelectMenuBuilder,
   ButtonBuilder,
   ButtonStyle,
 } = require('discord.js');
 
 const { getPrefix } = require('../../utils/prefixStore');
-const { buildAllHelpEmbeds: buildAllHelpEmbedsFromManifest } = require('../../utils/helpBuilder');
+const {
+  buildAllHelpEmbeds,
+  buildHelpManifest,
+  buildHelpCategoryOptions,
+} = require('../../utils/helpBuilder');
 const { privacyPolicyUrl, termsUrl } = require('../../config');
 
 function normalizeUrl(url) {
@@ -15,18 +20,12 @@ function normalizeUrl(url) {
   return v.length ? v : null;
 }
 
-function chunk(arr, size) {
-  const out = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
-
 function buildHelpNoticeEmbed({ dmOk, userId }) {
   const privacy = normalizeUrl(privacyPolicyUrl);
   const terms = normalizeUrl(termsUrl);
 
   const lines = [
-    `This message is visible for everyone.`,
+    `This message is visible only to you.`,
     `• DMs sent: ${dmOk ? '✅' : '❌ (DMs are disabled or blocked)'}`,
     `• Privacy Policy: ${privacy ? `[Click here](${privacy})` : 'Not set'}`,
     `• Terms & Conditions: ${terms ? `[Click here](${terms})` : 'Not set'}`,
@@ -65,73 +64,119 @@ function buildHelpLinkButtons() {
   return row.components.length ? [row] : [];
 }
 
-/**
- * Build ALL help embeds: slash + prefix.
- * This is used by both /help and !help.
- */
-async function buildAllHelpEmbeds({ client, prefix, member, userId }) {
-  return buildAllHelpEmbedsFromManifest({ client, prefix, member, userId });
+function buildHelpIntroEmbed(userId) {
+  return new EmbedBuilder()
+    .setTitle('Cloudy • Help')
+    .setDescription(
+      'Select a category to browse available commands. After choosing a category, you can select a specific command to see usage details.',
+    )
+    .setFooter({ text: `Requested by ${userId}` });
+}
+
+function buildHelpCategorySelect(manifest, selectedCategory) {
+  const options = buildHelpCategoryOptions(manifest).map((option) => ({
+    ...option,
+    default: option.value === selectedCategory,
+  }));
+
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('help:category')
+      .setPlaceholder('Choose a command category')
+      .setOptions(options),
+  );
+}
+
+function buildHelpCommandSelect(manifest, categoryKey, selectedCommand) {
+  const entries = manifest.filter((entry) => entry.moduleKey === categoryKey);
+  const groups = new Map();
+
+  for (const entry of entries) {
+    const commandKey = entry.commandKey || entry.trigger;
+    if (!groups.has(commandKey)) {
+      groups.set(commandKey, {
+        commandKey,
+        description: entry.description,
+        triggers: new Set(),
+      });
+    }
+    const group = groups.get(commandKey);
+    group.triggers.add(entry.trigger);
+  }
+
+  const options = [...groups.values()]
+    .sort((a, b) => a.commandKey.localeCompare(b.commandKey))
+    .map((group) => ({
+      label: [...group.triggers].sort().join(' / '),
+      description: group.description,
+      value: `${categoryKey}:${group.commandKey}`,
+      default: group.commandKey === selectedCommand,
+    }))
+    .slice(0, 25);
+
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId(`help:command`)
+      .setPlaceholder('Choose a command for details')
+      .setOptions(options),
+  );
+}
+
+function buildHelpComponents(manifest, selectedCategory, selectedCommand) {
+  const rows = [buildHelpCategorySelect(manifest, selectedCategory)];
+  if (selectedCategory) {
+    rows.push(buildHelpCommandSelect(manifest, selectedCategory, selectedCommand));
+  }
+  return rows;
 }
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName('help')
-    .setDescription('Show command list (DM) + public notice with Terms/Privacy links.'),
+    .setDescription('Browse the help menu interactively.'),
 
   buildHelpNoticeEmbed,
   buildHelpLinkButtons,
+  buildHelpIntroEmbed,
+  buildHelpComponents,
+  buildHelpManifest,
   buildAllHelpEmbeds,
 
   async execute(interaction) {
-    // Ack immediately so Discord won't leave /help "thinking..."
-    await interaction.deferReply({ ephemeral: false }).catch(() => {});
+    await interaction.deferReply({ ephemeral: true }).catch(() => {});
 
     const prefix = await getPrefix(interaction.guildId);
-    const allEmbeds = await buildAllHelpEmbeds({
+    const manifest = buildHelpManifest({
       client: interaction.client,
       prefix,
       member: interaction.member,
       userId: interaction.user.id,
     });
 
-    // Discord allows max 10 embeds per message.
-    const groups = chunk(allEmbeds, 10);
+    if (!manifest.length) {
+      const embed = new EmbedBuilder()
+        .setTitle('Help')
+        .setDescription('No commands are available for your role.')
+        .setFooter({ text: `Requested by ${interaction.user.id}` });
 
-    let dmOk = false;
-    try {
-      for (const g of groups) {
-        await interaction.user.send({ embeds: g });
-      }
-      dmOk = true;
-    } catch {
-      dmOk = false;
-    }
-
-    const noticeEmbed = buildHelpNoticeEmbed({ dmOk, userId: interaction.user.id });
-    const components = buildHelpLinkButtons();
-
-    // If DM failed, also show help embeds in-channel so user still gets help.
-    if (!dmOk) {
-      const first = groups[0] || [];
-      const rest = groups.slice(1);
-
-      await interaction.editReply({
-        embeds: [noticeEmbed, ...first],
-        components,
-        allowedMentions: { users: [interaction.user.id] },
+      return interaction.editReply({
+        embeds: [embed],
+        components: buildHelpLinkButtons(),
       }).catch(() => {});
-
-      for (const g of rest) {
-        await interaction.channel?.send({ embeds: g }).catch(() => {});
-      }
-      return;
     }
 
-    // DM succeeded: only the public notice
-    return interaction.editReply({
-      embeds: [noticeEmbed],
-      components,
-      allowedMentions: { users: [interaction.user.id] },
-    }).catch(() => {});
+    const introEmbed = new EmbedBuilder()
+      .setTitle('Cloudy • Help')
+      .setDescription(
+        'Select a category to browse available commands. After choosing a category, you can select a specific command to see usage details.',
+      )
+      .setFooter({ text: `Requested by ${interaction.user.id}` });
+
+    const components = [
+      ...buildHelpComponents(manifest),
+      ...buildHelpLinkButtons(),
+    ];
+
+    return interaction.editReply({ embeds: [introEmbed], components }).catch(() => {});
   },
 };

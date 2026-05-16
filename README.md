@@ -1,500 +1,307 @@
-# Discord Bot Pro v68
+﻿# Discord Bot Pro v68
 
-A feature-rich Discord bot built with **discord.js v14.25.1** featuring music playback, moderation tools, ticket systems, role management, and more.
+A full-featured Discord bot built with **discord.js v14.25.1** for moderation, tickets, music, role panels, and interactive server utilities.
 
-**Latest Version:** 68.0.0  
+**Version:** 68.0.0  
 **Node.js Requirement:** >=22.12.0
 
 ---
 
 ## Table of Contents
 
+- [Overview](#overview)
 - [Features](#features)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Commands](#commands)
-  - [Music Commands](#music-commands)
-  - [Moderation Commands](#moderation-commands)
-  - [Ticket Commands](#ticket-commands)
-  - [Greet/Leave Commands](#greetleave-commands)
-  - [Role Commands](#role-commands)
-  - [Room Commands](#room-commands)
-  - [Fun Commands](#fun-commands)
-  - [Utility Commands](#utility-commands)
-  - [Giveaway Commands](#giveaway-commands)
-  - [Developer Commands](#developer-commands)
-- [Deployment](#deployment)
+- [Requirements](#requirements)
+- [Quick Start](#quick-start)
+- [Environment Configuration](#environment-configuration)
+- [Docker & Compose](#docker--compose)
+- [Deploying Slash Commands](#deploying-slash-commands)
+- [Running the Bot](#running-the-bot)
+- [Development & Maintenance](#development--maintenance)
 - [Troubleshooting](#troubleshooting)
+- [Support](#support)
+
+---
+
+## Overview
+
+This repository contains a Discord bot with:
+- moderation tools and mod logging
+- ticket support panels
+- temporary voice room management
+- music playback across YouTube, Spotify, SoundCloud, and more
+- role panels, greet/leave automation, giveaways, and utility commands
+- Docker Compose support for Postgres, Redis, and monitoring
 
 ---
 
 ## Features
 
-✅ **Multi-Source Music System** - YouTube, YouTube Music, Spotify, SoundCloud, and more  
-✅ **Advanced Moderation** - Warnings, timeouts, bans, kicks, and logging  
-✅ **Ticket Management** - Create, manage, and archive tickets with custom panels  
-✅ **Role Management** - Role panels with button-based role assignment  
-✅ **Temporary Voice Channels** - Auto-managed voice rooms  
-✅ **Greeting/Leave Messages** - Customizable welcome and goodbye messages  
-✅ **Giveaway System** - Create and manage giveaways  
-✅ **24/7 Voice Support** - DAVE protocol support for continuous voice connectivity  
-✅ **Moderation Logging** - Comprehensive mod case tracking and history  
-✅ **Utility Features** - Server info, user profiles, starboard, sticky messages, and more
+- ✅ Moderation: `/warn`, `/ban`, `/kick`, `/timeout`, `/clear`, `/modlogs`
+- ✅ Ticket system: ticket creation, panels, transcripts, archive
+- ✅ Music playback: `/music` queue, skip, pause, resume, 24/7 mode
+- ✅ Temporary voice room management: `/room` controls
+- ✅ Role panels: self-assign roles via buttons and selects
+- ✅ Greeting/leave messages with templates and previews
+- ✅ Giveaways with reaction entry and reroll support
+- ✅ Utility commands: `/help`, `/doctor`, `/ping`, `/avatar`, `/server`
+- ✅ Monitoring stack with Prometheus and Grafana profiles
+- ✅ Dockerized production and local development setup
 
 ---
 
-## Installation
-
-### Prerequisites
+## Requirements
 
 - Node.js 22.12.0 or higher
-- FFmpeg (for music playback)
-- Discord Bot Token
-- Optional: yt-dlp (for improved YouTube playback)
+- npm (bundled with Node.js)
+- FFmpeg for music playback
+- Docker + Docker Compose for containerized deployment
 
-### Windows Installation
+---
 
-```powershell
-# Clone the repository
-git clone <repo-url>
+## Quick Start
+
+1. Clone the repository:
+```bash
+git clone <repository-url>
 cd discord-bot-pro-v68
-
-# Clean install (recommended)
-Remove-Item -Recurse -Force .\node_modules -ErrorAction SilentlyContinue
-Remove-Item -Force .\package-lock.json -ErrorAction SilentlyContinue
-
-# Install dependencies (include optional deps for DAVE protocol)
-npm install --include=optional --legacy-peer-deps
-
-# Copy environment configuration
-Copy-Item .env.example .env
-
-# Deploy commands
-npm run deploy:guild
-
-# Start the bot
-npm start
 ```
 
-### Linux/macOS Installation
-
+2. Install dependencies:
 ```bash
-# Clone the repository
-git clone <repo-url>
-cd discord-bot-pro-v68
-
-# Clean install
-rm -rf node_modules package-lock.json
-
-# Install dependencies
 npm install --include=optional --legacy-peer-deps
+```
 
-# Copy environment configuration
+3. Copy the environment template:
+```bash
 cp .env.example .env
+```
 
-# Deploy commands
+4. Update `.env` with your bot token and service credentials.
+
+5. Deploy commands for testing:
+```bash
 npm run deploy:guild
+```
 
-# Start the bot
+6. Start the bot:
+```bash
 npm start
 ```
 
 ---
 
-## Configuration
+## Environment Configuration
 
-### Environment Variables (.env)
+Copy `.env.example` to `.env` and fill in your values.
+
+Required values in production or Docker:
 
 ```env
-# Bot Token
-DISCORD_TOKEN=your_bot_token_here
-
-# Spotify Credentials (optional, for Spotify playlist/album support)
-SPOTIFY_CLIENT_ID=your_spotify_id
-SPOTIFY_CLIENT_SECRET=your_spotify_secret
-SPOTIFY_REFRESH_TOKEN=your_spotify_token
-
-# YouTube DLP Path (optional, for improved YouTube playback)
-YTDLP_PATH=/path/to/yt-dlp
-
-# Database Configuration
-DATABASE_URL=your_database_url
-
-# Logging Level
-LOG_LEVEL=info
+DISCORD_TOKEN=your_discord_token
+CLIENT_ID=your_client_id
+GUILD_ID=your_test_guild_id
+REDIS_PASSWORD=your_redis_password
+REDIS_URL=redis://:your_redis_password@redis:6379
+POSTGRES_PASSWORD=your_postgres_password
+DATABASE_URL=postgresql://bot_user:your_postgres_password@postgres:5432/bot_db
+PGADMIN_PASSWORD=your_pgadmin_password
+GRAFANA_PASSWORD=your_grafana_password
 ```
 
-### Setup Spotify Playlist Support
+Optional values:
 
-1. Run the Spotify authorization:
-```powershell
-node -e "require('play-dl').authorization()"
+```env
+OWNER_IDS=comma_separated_owner_ids
+KEYV_URL=sqlite://database.sqlite
+YTDLP_MAX_CONCURRENT=8
+YTDLP_QUEUE_TIMEOUT_MS=30000
+YTDLP_COOKIES_FILE=./cookies.txt
+SPOTIFY_CLIENT_ID=your_spotify_client_id
+SPOTIFY_CLIENT_SECRET=your_spotify_client_secret
+SHARD_COUNT=1
+SHARD_DELAY_MS=5500
+ACTIVITY_ROTATE_MS=30000
+ACTIVITY_TEXT=!help or /help to see commands
+STREAM_URL=https://twitch.tv/discord
+BOT_DEV_USER_IDS=your_user_id
+BOT_DEV_GUILD_IDS=your_guild_id
+BOT_DEV_CACHE_MINUTES=360
+PRIVACY_POLICY_URL=https://example.com/privacy
+TERMS_URL=https://example.com/terms
 ```
 
-2. Follow the prompted instructions to authenticate
-3. Add the tokens to your `.env` file
-
-### Setup yt-dlp (for improved YouTube playback)
-
-1. Download `yt-dlp.exe` from [yt-dlp GitHub Releases](https://github.com/yt-dlp/yt-dlp/releases)
-2. Place it in: `discord-bot-pro/bin/yt-dlp.exe`
-   - OR set `YTDLP_PATH=full\path\to\yt-dlp.exe` in `.env`
-   - OR install globally and ensure it's in your PATH
-3. Verify with: `npm run doctor`
+> Use internal Docker hostnames (`redis`, `postgres`) when running with Docker Compose.
 
 ---
 
-## Commands
+## Docker & Compose
 
-All commands use Discord's slash command system (`/`).
+This repo includes `docker-compose.yml` with profiles for production, development, and monitoring.
 
-### Music Commands
+### Production bot only
 
-Play music from multiple sources with full queue management.
+```bash
+docker compose --profile bot up -d
+```
 
-| Command | Description | Usage |
-|---------|-------------|-------|
-| `/music play` | Play a song from YouTube, Spotify, SoundCloud, etc. | `/music play [query or URL]` |
-| `/music now` | Display current playing track | `/music now` |
-| `/music queue` | View the current song queue | `/music queue` |
-| `/music skip` | Skip the current track | `/music skip` |
-| `/music pause` | Pause playback | `/music pause` |
-| `/music resume` | Resume playback | `/music resume` |
-| `/music stop` | Stop music and disconnect | `/music stop` |
-| `/music volume` | Set playback volume (0.1-2.0) | `/music volume [0.1-2.0]` **[Staff Only]** |
-| `/music 247` | Enable/disable 24/7 mode | `/music 247 [on\|off]` |
-| `/music leave` | Make bot leave voice channel | `/music leave` **[Staff Only]** |
+### Local development with host port access
 
-**Supported Sources:**
-- 🎵 YouTube videos & search
-- 🎵 YouTube playlists (up to 200 tracks)
-- 🎵 YouTube Music links
-- 🎵 Spotify tracks (matched to YouTube)
-- 🎵 Spotify playlists & albums (with credentials)
-- 🎵 SoundCloud tracks & playlists
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile bot --profile dev up -d
+```
 
----
+### Start monitoring stack
 
-### Moderation Commands
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile monitoring up -d
+```
 
-Comprehensive moderation tools for server management.
+### Recommended local start
 
-| Command | Description | Usage |
-|---------|-------------|-------|
-| `/warn` | Warn a member | `/warn [user] [reason]` |
-| `/warn list` | View member warnings | `/warn list [user]` |
-| `/warn remove` | Remove a warning | `/warn remove [user] [case_id]` |
-| `/warn clear` | Clear all warnings for a user | `/warn clear [user] [reason]` |
-| `/ban` | Ban a member from the server | `/ban [user] [reason]` |
-| `/kick` | Kick a member from the server | `/kick [user] [reason]` |
-| `/timeout` | Timeout a member | `/timeout [user] [duration] [reason]` |
-| `/clear` | Delete messages in bulk | `/clear [amount] [user (optional)]` |
-| `/automod` | Configure automod settings | `/automod [enable\|disable] [type]` |
-| `/modlogs` | View moderation logs | `/modlogs [user (optional)] [page (optional)]` |
-| `/modcase` | View specific mod case | `/modcase [case_id]` |
-| `/logs` | Search moderation logs | `/logs [user (optional)] [action (optional)]` |
-| `/verify` | Setup or manage verification system | `/verify [setup\|configure]` |
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile bot --profile monitoring up -d
+```
+
+### Service endpoints
+
+- Bot health: `http://localhost:3000/health`
+- PgAdmin: `http://localhost:8080`
+- Prometheus: `http://localhost:9090`
+- Grafana: `http://localhost:3001`
 
 ---
 
-### Ticket Commands
+## Deploying Slash Commands
 
-Complete ticket system for support and management.
+Use guild deployment for immediate command registration in a specific server:
 
-| Command | Description | Usage |
-|---------|-------------|-------|
-| `/ticket` | Main ticket management command | `/ticket [subcommand]` |
-| `/ticket create` | Create a new ticket | `/ticket create [type]` |
-| `/ticket panel-builder` | Create a custom ticket panel | `/ticket panel-builder` |
-| `/ticket add` | Add a user to ticket | `/ticket add [user]` |
-| `/ticket remove` | Remove a user from ticket | `/ticket remove [user]` |
-| `/ticket-done` | Mark ticket as done | `/ticket-done` |
-| `/transcript` | Generate ticket transcript | `/transcript [format]` |
-
-**Features:**
-- Custom panel embeds
-- Role-based access control
-- Automatic archival
-- HTML transcripts
-
----
-
-### Greet/Leave Commands
-
-Set up welcome and goodbye messages.
-
-| Command | Description | Usage |
-|---------|-------------|-------|
-| `/greet` | Configure greeting messages | `/greet [enable\|disable] [channel]` |
-| `/greet set` | Set custom greeting message | `/greet set [message]` |
-| `/greet preview` | Preview greeting message | `/greet preview` |
-| `/leave` | Configure leave messages | `/leave [enable\|disable] [channel]` |
-| `/leave set` | Set custom leave message | `/leave set [message]` |
-| `/leave preview` | Preview leave message | `/leave preview` |
-
-**Message Variables:**
-- `{user}` - Member mention
-- `{username}` - Member username
-- `{server}` - Server name
-- `{membercount}` - Total members
-
----
-
-### Role Commands
-
-Manage roles and create self-assignment panels.
-
-| Command | Description | Usage |
-|---------|-------------|-------|
-| `/role` | Assign/remove roles | `/role [user] [role] [add\|remove]` |
-| `/rolepanel` | Create role assignment panel | `/rolepanel [create\|edit\|delete]` |
-| `/rolepanel add` | Add role to panel | `/rolepanel add [panel] [role] [emoji]` |
-| `/rolepanel remove` | Remove role from panel | `/rolepanel remove [panel] [role]` |
-
-**Features:**
-- Button-based role assignment
-- Dropdown menus support
-- Custom embed design
-- Max role limits
-
----
-
-### Room Commands
-
-Manage temporary voice channels.
-
-| Command | Description | Usage |
-|---------|-------------|-------|
-| `/room` | Create temporary voice room | `/room [name]` |
-| `/room list` | View active rooms | `/room list` |
-| `/room config` | Configure room settings | `/room config [setting] [value]` |
-| `/room close` | Close a temporary room | `/room close` |
-
-**Features:**
-- Auto-delete empty rooms
-- Customizable names
-- Member limits
-- Persistent configuration
-
----
-
-### Fun Commands
-
-Fun interactive commands for server engagement.
-
-| Command | Description | Usage |
-|---------|-------------|-------|
-| `/bite` | Bite someone | `/bite [user]` |
-| `/blush` | Blush animation | `/blush` |
-| `/cry` | Cry animation | `/cry` |
-| `/cuddle` | Cuddle someone | `/cuddle [user]` |
-| `/dance` | Dance animation | `/dance` |
-| `/hug` | Hug someone | `/hug [user]` |
-| `/kiss` | Kiss someone | `/kiss [user]` |
-| `/pat` | Pat someone | `/pat [user]` |
-| `/poke` | Poke someone | `/poke [user]` |
-| `/slap` | Slap someone | `/slap [user]` |
-| `/smile` | Smile animation | `/smile` |
-| `/tickle` | Tickle someone | `/tickle [user]` |
-| `/wave` | Wave animation | `/wave` |
-
----
-
-### Utility Commands
-
-General utility and information commands.
-
-| Command | Description | Usage |
-|---------|-------------|-------|
-| `/avatar` | Get user avatar | `/avatar [user (optional)]` |
-| `/user` | Get user information | `/user [user (optional)]` |
-| `/server` | Get server information | `/server` |
-| `/ping` | Check bot latency | `/ping` |
-| `/help` | Get command help | `/help [command (optional)]` |
-| `/modules` | View enabled modules | `/modules` |
-| `/doctor` | System health check | `/doctor` |
-| `/embed` | Create custom embed | `/embed` |
-| `/prefix` | Set command prefix | `/prefix [new_prefix]` |
-| `/starboard` | Configure starboard | `/starboard [enable\|disable]` |
-| `/sticky` | Make a sticky message | `/sticky [channel] [message]` |
-
----
-
-### Giveaway Commands
-
-Create and manage giveaways.
-
-| Command | Description | Usage |
-|---------|-------------|-------|
-| `/giveaway` | Main giveaway command | `/giveaway [subcommand]` |
-| `/giveaway create` | Create a giveaway | `/giveaway create [prize] [duration] [winners]` |
-| `/giveaway end` | End giveaway immediately | `/giveaway end [message_id]` |
-| `/giveaway reroll` | Reroll giveaway winners | `/giveaway reroll [message_id]` |
-| `/giveaway list` | View active giveaways | `/giveaway list` |
-
-**Features:**
-- Reaction-based entry
-- Automatic winner selection
-- Reroll capability
-- Customizable duration
-
----
-
-### Developer Commands
-
-Administrative and development commands.
-
-| Command | Description | Usage | Restrictions |
-|---------|-------------|-------|--------------|
-| `/dev eval` | Evaluate JavaScript code | `/dev eval [code]` | **Bot Owner Only** |
-| `/dev reload` | Reload commands/events | `/dev reload [module]` | **Bot Owner Only** |
-| `/dev status` | Set bot status | `/dev status [text] [type]` | **Bot Owner Only** |
-| `/dev ping` | Get API latency | `/dev ping` | **Bot Owner Only** |
-
----
-
-## Deployment
-
-### Deploy Commands to Guild (Testing)
-
-```powershell
+```bash
 npm run deploy:guild
 ```
 
-This registers commands for faster testing (guild-specific, instant updates).
+Use global deployment for production-wide registration (may take 1-2 hours to propagate):
 
-### Deploy Commands Globally
-
-```powershell
+```bash
 npm run deploy:global
 ```
 
-This registers commands globally (takes 1-2 hours to propagate everywhere).
+For cleanup and refresh:
+
+```bash
+npm run deploy:clear-guild
+```
+
+---
+
+## Running the Bot
+
+Single instance mode:
+
+```bash
+npm start
+```
+
+Sharded mode:
+
+```bash
+npm run start:shard
+```
+
+Migration utility:
+
+```bash
+npm run migrate
+```
+
+Health check and diagnostics:
+
+```bash
+npm run doctor
+```
 
 ---
 
 ## Development & Maintenance
 
-### Check System Health
+### Tests
 
-```powershell
-# CLI health check
-npm run doctor
-
-# In-Discord check
-/doctor
-```
-
-### Run Tests
-
-```powershell
-# Smoke test (loads all modules)
+```bash
 npm run smoke
-
-# Unit tests
 npm test
 ```
 
-### Code Quality
+### Code quality
 
-```powershell
-# Lint code
+```bash
 npm run lint
-
-# Format code
 npm run format
 ```
 
 ### Logs
 
-Logs are automatically written to `./logs/app-YYYY-MM-DD.log` and printed to console.
+Logs are written to `./logs/app-YYYY-MM-DD.log`.
 
-View logs:
-```powershell
-Get-Content .\logs\app-*.log -Tail 100  # Last 100 lines
+Watch the latest log output:
+
+```bash
+Get-Content .\logs\app-*.log -Tail 100
 ```
 
 ---
 
 ## Troubleshooting
 
-### DAVE Protocol Error
+### Bot fails to start
 
-**Error:** `Cannot utilize the DAVE protocol as the @snazzah/davey package has not been installed`
+- Confirm `.env` exists and contains `DISCORD_TOKEN`, `DATABASE_URL`, `REDIS_URL`, and `POSTGRES_PASSWORD`.
+- Check logs:
 
-**Fix:**
-```powershell
-rmdir /s /q node_modules 2>$null
-del package-lock.json 2>$null
-npm config set optional true
+```bash
+docker compose logs -f discord-bot
+```
+
+### Database connection issues
+
+- Verify PostgreSQL is healthy:
+
+```bash
+docker compose exec postgres pg_isready -U bot_user -d bot_db
+```
+
+- Confirm `DATABASE_URL` uses `postgres` service name inside Docker.
+
+### Redis connection issues
+
+- Verify Redis is healthy:
+
+```bash
+docker compose exec redis redis-cli -a "$env:REDIS_PASSWORD" ping
+```
+
+- Confirm `REDIS_URL` is `redis://:password@redis:6379`.
+
+### Music playback or DAVE issues
+
+- Install optional dependencies:
+
+```bash
 npm install --include=optional --legacy-peer-deps
-npm run doctor
 ```
 
-### Voice/Music Not Working
-
-1. Install FFmpeg from [ffmpeg.org](https://ffmpeg.org)
-2. Run: `npm run doctor`
-3. Verify optional dependencies are installed
-4. Check firewall settings (UDP port access)
-
-### YouTube 403 / Decipher Errors
-
-YouTube frequently updates its protection, causing temporary playback issues.
-
-**Solution:** Setup yt-dlp as a fallback (see [Configuration](#configuration))
-
-If using yt-dlp:
-```powershell
-# Download yt-dlp.exe
-# Place in: discord-bot-pro/bin/yt-dlp.exe
-# Test with: npm run doctor
-/music play https://www.youtube.com/watch?v=dQw4w9WgXcQ
-```
-
-### Node 24 Compatibility Issues
-
-Ensure you're using the correct installation method:
-
-```powershell
-# Force clean install with optional deps
-npm config set optional true
-npm install --include=optional --legacy-peer-deps
-npm run doctor
-```
-
-### Database Connection Issues
-
-1. Verify `DATABASE_URL` in `.env`
-2. Check database service is running
-3. Test connection with `/doctor`
-4. Review logs: `./logs/app-*.log`
-
-### Command Not Responding
-
-1. Check guild command deployment: `npm run deploy:guild`
-2. Restart bot: `npm start`
-3. Clear Discord client cache (Log out/in)
-4. Check permissions: Bot needs `applications.commands` scope
+- Ensure FFmpeg is installed and `yt-dlp` is available for YouTube playback.
 
 ---
 
-## Support & Contribution
+## Support
 
-For issues, bugs, or feature requests, please open a GitHub issue with:
-- Bot version (`discord-bot-pro v68`)
-- Detailed error message
-- Steps to reproduce
-- Relevant logs from `./logs/app-*.log`
+For issues or feature requests, open a GitHub issue and include:
+- bot version: `68.0.0`
+- Node version: `>=22.12.0`
+- exact error message and relevant logs from `./logs`
 
 ---
 
 ## License
 
 This project is provided as-is for personal and server use.
-
----
-
-**Last Updated:** 2026-04-25  
-**Version:** 68.0.0  
-**Built with:** discord.js v14.25.1

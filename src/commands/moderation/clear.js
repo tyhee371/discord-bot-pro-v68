@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } = require('discord.js');
 const { safeReply, safeDefer } = require('../../utils/safeReply');
-const { requireModLog, createAndSendCase } = require('../../utils/modLogService');
+const { requireModLogStrict: requireModLog, createAndSendCase } = require('../../utils/modLogService');
 
 
 async function replyOrEdit(interaction, payload) {

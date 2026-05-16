@@ -206,6 +206,108 @@ function buildEmbedsForSource(entries, sourceLabel) {
   return embeds;
 }
 
+function buildHelpManifest({ client, prefix, member, userId }) {
+  const slash = discoverSlashManifest(client);
+  const prefixManifest = buildPrefixManifest(prefix);
+  const manifest = [...slash, ...prefixManifest];
+  return filterVisibleEntries(manifest, { member, userId });
+}
+
+function buildHelpCategories(entries) {
+  const byModule = new Map();
+  for (const entry of entries) {
+    const moduleKey = entry.moduleKey || 'utility';
+    if (!byModule.has(moduleKey)) {
+      byModule.set(moduleKey, { moduleKey, title: toTitle(moduleKey), entries: [] });
+    }
+    byModule.get(moduleKey).entries.push(entry);
+  }
+  return [...byModule.values()].sort((a, b) => a.title.localeCompare(b.title));
+}
+
+function buildHelpCategoryOptions(entries) {
+  return buildHelpCategories(entries).map((category) => ({
+    label: category.title,
+    description: `${category.entries.length} command${category.entries.length === 1 ? '' : 's'}`,
+    value: category.moduleKey,
+  }));
+}
+
+function getHelpCommandGroups(entries) {
+  const groups = new Map();
+  for (const entry of entries) {
+    const commandKey = entry.commandKey || entry.trigger;
+    if (!groups.has(commandKey)) {
+      groups.set(commandKey, {
+        moduleKey: entry.moduleKey,
+        commandKey,
+        description: entry.description,
+        triggers: new Set(),
+        aliases: new Set(),
+        sources: new Set(),
+        entries: [],
+      });
+    }
+    const group = groups.get(commandKey);
+    group.triggers.add(entry.trigger);
+    for (const alias of entry.aliases || []) {
+      group.aliases.add(alias);
+    }
+    group.sources.add(entry.source);
+    group.entries.push(entry);
+  }
+  return [...groups.values()].sort((a, b) => a.commandKey.localeCompare(b.commandKey));
+}
+
+function buildHelpCategoryEmbed(moduleKey, entries, userId) {
+  const title = toTitle(moduleKey);
+  const groups = getHelpCommandGroups(entries);
+  const lines = groups.map((group) => {
+    const triggerList = [...group.triggers].sort().join(' / ');
+    const aliasPart = group.aliases.size
+      ? ` (aliases: ${[...group.aliases].sort().map((alias) => `\`${alias}\``).join(', ')})`
+      : '';
+    const sourceTags = [...group.sources]
+      .map((source) => (source === 'slash' ? 'Slash' : 'Prefix'))
+      .join(' / ');
+    return `**${triggerList}** — ${group.description}${aliasPart}${sourceTags ? ` — _${sourceTags}_` : ''}`;
+  });
+
+  return new EmbedBuilder()
+    .setTitle(`Help • ${title}`)
+    .setDescription(lines.length ? lines.join('\n') : 'No commands were found in this category.')
+    .setFooter({ text: `Requested by ${userId}` });
+}
+
+function buildHelpCommandEmbed(moduleKey, commandKey, entries, userId) {
+  const title = toTitle(moduleKey);
+  const groups = getHelpCommandGroups(entries);
+  const embed = new EmbedBuilder()
+    .setTitle(`Help • ${title} • ${commandKey}`)
+    .setDescription('Choose another command or category from the menu below.')
+    .setFooter({ text: `Requested by ${userId}` });
+
+  if (!groups.length) {
+    embed.addFields({ name: 'Command details', value: 'No command details are available.' });
+    return embed;
+  }
+
+  for (const group of groups) {
+    const lines = group.entries.map((entry) => {
+      const aliasText = entry.aliases?.length ? ` (aliases: ${entry.aliases.map((a) => `\`${a}\``).join(', ')})` : '';
+      return `**\`${entry.trigger}\`** — ${entry.description}${aliasText}`;
+    });
+    const sourceLabel = group.sources.has('slash') && group.sources.has('prefix')
+      ? 'Slash + Prefix'
+      : group.sources.has('slash')
+        ? 'Slash'
+        : 'Prefix';
+    embed.addFields({ name: `${sourceLabel} command`, value: lines.join('\n').slice(0, 1024) });
+  }
+
+  return embed;
+}
+
 function buildAllHelpEmbeds({ client, prefix, member, userId }) {
   const slash = discoverSlashManifest(client);
   const prefixManifest = buildPrefixManifest(prefix);
@@ -244,4 +346,10 @@ module.exports = {
   discoverSlashManifest,
   buildPrefixManifest,
   classifyDuplicateCommands,
+  buildHelpManifest,
+  buildHelpCategoryOptions,
+  buildHelpCategoryEmbed,
+  buildHelpCommandEmbed,
+  getHelpCommandGroups,
+  toTitle,
 };

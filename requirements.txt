@@ -1,34 +1,31 @@
-# Discord Bot Pro - dependency list (Node.js project)
-#
-# NOTE:
-# - This bot is written for Node.js (discord.js). A Python/pip "requirements.txt"
-#   isn't used to install dependencies. Use npm instead.
-#
-# System requirements:
-#   - Node.js >= 22.12.0
-#   - npm (bundled with Node.js)
-#
-# Install:
-#   1) In the bot folder, run:
-        # 1. Start infrastructure only (no bot container)
-#       docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile monitoring up -d
+# Requirements and Installation Notes
 
-#       2. Migrate
-#       docker exec discord-bot-prod node scripts/migrate.js
-#       (if container not running: npm run migrate instead)
+This project is a Node.js Discord bot. Dependencies are managed via `package.json` and installed with `npm`.
 
-#       3. Start bot
-#       npm run start:shard
-#   2) Copy .env.example to .env and fill in your values
-#   3) Deploy commands (recommended for testing):
-#        npm run deploy:guild
-#   4) Start:
-#        npm start
-#
-# npm dependencies used by this bot (versions from package.json):
-#   - discord.js 14.25.1
-#   - keyv ^5.5.0
-#   - @keyv/sqlite ^4.0.2
-#
-# One-liner install (optional):
-#   npm install discord.js@14.25.1 keyv@^5.5.0 @keyv/sqlite@^4.0.2
+## System Requirements
+
+- Node.js 22.12.0 or higher
+- npm (bundled with Node.js)
+- FFmpeg for music playback
+- Docker + Docker Compose for containerized deployment
+
+## Install Dependencies
+
+```bash
+npm install --include=optional --legacy-peer-deps
+```
+
+## Optional Packages
+
+Optional dependencies improve voice and music playback:
+
+- `@discordjs/opus` — better voice performance than `opusscript`
+- `yt-dlp` — improved YouTube playback fallback
+- `ffmpeg-static` — included for cross-platform FFmpeg support
+
+## Notes
+
+- This file is informational only.
+- Do not use `pip` for this repository.
+- Use `npm run migrate` to run database migrations.
+- Use `npm run deploy:guild` or `npm run deploy:global` to register Discord slash commands.

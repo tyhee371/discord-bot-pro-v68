@@ -25,38 +25,54 @@ function formatPresenceStatus(status) {
 
 async function handleHelpCommand(message, prefix) {
   const helpCmd = require('../../../commands/utility/help');
-  const allEmbeds = await helpCmd.buildAllHelpEmbeds({
+  const manifest = helpCmd.buildHelpManifest({
     client: message.client,
     prefix,
     member: message.member,
     userId: message.author.id,
   });
-  const groups = [];
-  for (let i = 0; i < allEmbeds.length; i += 10) groups.push(allEmbeds.slice(i, i + 10));
 
-  let dmOk = false;
-  try {
-    for (const g of groups) await message.author.send({ embeds: g });
-    dmOk = true;
-  } catch {
-    dmOk = false;
+  const introEmbed = helpCmd.buildHelpIntroEmbed(message.author.id);
+  const components = helpCmd.buildHelpComponents(manifest);
+
+  if (!manifest.length) {
+    await message.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle('Help')
+          .setDescription('No commands are available for your role.')
+          .setFooter({ text: `Requested by ${message.author.id}` }),
+      ],
+      allowedMentions: { users: [message.author.id] },
+    }).catch(() => {});
+    return true;
   }
 
-  const noticeEmbed = helpCmd.buildHelpNoticeEmbed({ dmOk, userId: message.author.id });
-  const components = helpCmd.buildHelpLinkButtons();
+  let sentInDm = false;
+  try {
+    await message.author.send({ embeds: [introEmbed], components });
+    sentInDm = true;
+  } catch {
+    sentInDm = false;
+  }
 
-  if (!dmOk) {
-    const first = groups[0] || [];
-    const rest = groups.slice(1);
+  if (sentInDm) {
     await message
-      .reply({ embeds: [noticeEmbed, ...first], components, allowedMentions: { users: [message.author.id] } })
+      .reply({
+        content: '✅ I sent you an interactive help menu in DMs. Use the menu there to browse categories and command details.',
+        allowedMentions: { users: [message.author.id] },
+      })
       .catch(() => {});
-    for (const g of rest) await message.channel.send({ embeds: g }).catch(() => {});
     return true;
   }
 
   await message
-    .reply({ embeds: [noticeEmbed], components, allowedMentions: { users: [message.author.id] } })
+    .reply({
+      content: '❌ I could not DM you. Here is the interactive help menu in this channel instead.',
+      embeds: [introEmbed],
+      components,
+      allowedMentions: { users: [message.author.id] },
+    })
     .catch(() => {});
   return true;
 }

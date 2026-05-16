@@ -1,263 +1,241 @@
-# Discord Bot Deployment Guide
-# Phase 5: Production Deployment and Rollback Procedures
+# Deployment Guide
+
+This guide covers environment setup, Docker Compose deployment, database migration, monitoring, and rollback for `discord-bot-pro-v68`.
 
 ## Prerequisites
 
 - Docker and Docker Compose installed
-- PostgreSQL client tools
-- Redis client tools
-- Discord bot token and application secrets
-- Domain name (optional, for HTTPS)
+- Node.js >= 22.12.0 for local development
+- FFmpeg installed for music playback
+- Discord bot token and application client credentials
+- PostgreSQL and Redis when running with Docker Compose
 
-## Environment Setup
+---
 
-### 1. Clone Repository
+## Repository Setup
+
 ```bash
 git clone <repository-url>
 cd discord-bot-pro-v68
 ```
 
-### 2. Create Environment File
+Copy the environment template:
+
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your configuration:
+Edit `.env` and fill values for:
+- `DISCORD_TOKEN`
+- `CLIENT_ID`
+- `GUILD_ID`
+- `REDIS_PASSWORD`
+- `REDIS_URL`
+- `POSTGRES_PASSWORD`
+- `DATABASE_URL`
+- `PGADMIN_PASSWORD`
+- `GRAFANA_PASSWORD`
+
+The project already includes Docker Compose service names, so use these values for Docker:
+
 ```env
-# Discord Configuration
-DISCORD_TOKEN=your_bot_token_here
-DISCORD_CLIENT_ID=your_client_id_here
-DISCORD_CLIENT_SECRET=your_client_secret_here
-
-# Database Configuration
-DATABASE_URL=postgresql://bot_user:bot_password@localhost:5432/bot_db
-REDIS_URL=redis://localhost:6379
-REDIS_PASSWORD=your_redis_password
-
-# Application Configuration
-NODE_ENV=production
-HEALTH_PORT=3000
-LOG_LEVEL=info
-
-# Optional: External Services
-SENTRY_DSN=your_sentry_dsn
-DATADOG_API_KEY=your_datadog_key
+REDIS_URL=redis://:your_redis_password@redis:6379
+DATABASE_URL=postgresql://bot_user:your_postgres_password@postgres:5432/bot_db
 ```
 
-### 3. Initialize Database
+---
+
+## Docker Compose Profiles
+
+The repository uses three deployment profiles:
+
+- `bot` — Discord bot service
+- `dev` — pgAdmin service for local development
+- `monitoring` — Prometheus and Grafana
+
+### Start bot only
+
 ```bash
-# Start only PostgreSQL
-docker-compose up -d postgres
-
-# Wait for database to be ready
-sleep 10
-
-# Run migrations
-docker-compose exec postgres psql -U bot_user -d bot_db -f /docker-entrypoint-initdb.d/001_initial_schema.sql
+docker compose --profile bot up -d
 ```
 
-## Local Development
+### Start bot + pgAdmin for development
 
-### Start All Services
 ```bash
-docker-compose --profile dev up -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile bot --profile dev up -d
 ```
 
-### View Logs
+### Start monitoring
+
 ```bash
-# Bot logs
-docker-compose logs -f discord-bot
-
-# Database logs
-docker-compose logs -f postgres
-
-# Redis logs
-docker-compose logs -f redis
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile monitoring up -d
 ```
 
-### Access Services
-- **Bot Health Check**: http://localhost:3000/health
-- **PgAdmin**: http://localhost:8080 (admin@bot.local / admin)
-- **Redis**: localhost:6379
+### Start bot, local dev, and monitoring together
 
-## Production Deployment
-
-### 1. Build and Deploy
 ```bash
-# Build production images
-docker-compose build
-
-# Deploy with zero-downtime
-docker-compose up -d --scale discord-bot=2
-
-# Wait for health checks
-sleep 30
-
-# Scale back to 1 instance
-docker-compose up -d --scale discord-bot=1
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile bot --profile dev --profile monitoring up -d
 ```
 
-### 2. Database Backup
+---
+
+## Database Initialization and Migration
+
+The PostgreSQL service mounts `./migrations` into the container init directory.
+
+On first startup, the database is initialized automatically from `migrations/`.
+
+For later migration runs:
+
 ```bash
-# Create backup
-docker-compose exec postgres pg_dump -U bot_user bot_db > backup_$(date +%Y%m%d_%H%M%S).sql
-
-# Restore backup
-docker-compose exec -T postgres psql -U bot_user bot_db < backup_file.sql
+npm run migrate
 ```
 
-### 3. Monitoring Setup
+To view migration status:
+
 ```bash
-# Health check endpoint
-curl http://your-domain:3000/health
-
-# Readiness check
-curl http://your-domain:3000/ready
-
-# Metrics endpoint (if implemented)
-curl http://your-domain:3000/metrics
+npm run migrate:status
 ```
 
-## Rollback Procedures
+To run a dry-run migration:
 
-### Emergency Rollback
 ```bash
-# Stop current deployment
-docker-compose down
-
-# Deploy previous version
-docker-compose pull discord-bot  # Pulls previous image
-docker-compose up -d
-
-# Verify health
-curl http://your-domain:3000/health
+npm run migrate:dry-run
 ```
 
-### Database Rollback
+---
+
+## Running the Bot
+
+### Single-instance mode
+
 ```bash
-# Stop the bot
-docker-compose stop discord-bot
-
-# Restore database from backup
-docker-compose exec -T postgres psql -U bot_user bot_db < previous_backup.sql
-
-# Restart bot
-docker-compose start discord-bot
+npm start
 ```
 
-### Blue-Green Deployment
+### Sharded mode
+
 ```bash
-# Create blue environment
-docker-compose -f docker-compose.blue.yml up -d
-
-# Test blue environment
-curl http://blue.your-domain:3000/health
-
-# Switch traffic to blue
-# (Update load balancer/reverse proxy)
-
-# Keep green as rollback option
-docker-compose down  # Takes down old environment
+npm run start:shard
 ```
 
-## Configuration Management
+### Health and diagnostics
 
-### Secrets Management
-- Use Docker secrets or external secret managers
-- Never commit secrets to repository
-- Rotate secrets regularly
-
-### Environment Variables
 ```bash
-# Development
-NODE_ENV=development
-LOG_LEVEL=debug
-
-# Staging
-NODE_ENV=staging
-LOG_LEVEL=info
-
-# Production
-NODE_ENV=production
-LOG_LEVEL=warn
+npm run doctor
 ```
 
-## Scaling and Performance
+---
 
-### Horizontal Scaling
+## Slash Command Deployment
+
+For fast testing in one guild:
+
 ```bash
-# Scale to multiple instances
-docker-compose up -d --scale discord-bot=3
-
-# Use load balancer for multiple instances
-# Configure Redis for shared state
+npm run deploy:guild
 ```
 
-### Database Optimization
+For global registration:
+
 ```bash
-# Create indexes for performance
-docker-compose exec postgres psql -U bot_user -d bot_db -c "
-CREATE INDEX CONCURRENTLY idx_audit_guild_time ON audit_log (guild_id, timestamp);
-CREATE INDEX CONCURRENTLY idx_command_executed ON command_usage (executed_at);
-"
+npm run deploy:global
 ```
 
-### Redis Clustering
-For high availability, configure Redis cluster:
-```yaml
-# docker-compose.redis.yml
-version: '3.8'
-services:
-  redis-cluster:
-    image: redis:7-alpine
-    command: redis-server /etc/redis/redis.conf
-    volumes:
-      - ./redis.conf:/etc/redis/redis.conf
-    networks:
-      - bot-network
+To clear guild commands:
+
+```bash
+npm run deploy:clear-guild
 ```
+
+> Guild deployment updates instantly. Global command propagation may take 1-2 hours.
+
+---
+
+## Monitoring and Service Access
+
+- Bot health check: `http://localhost:3000/health`
+- PgAdmin: `http://localhost:8080`
+- Prometheus: `http://localhost:9090`
+- Grafana: `http://localhost:3001`
+
+Grafana credentials are configured with `GF_SECURITY_ADMIN_USER=admin` and password from `GRAFANA_PASSWORD`.
+
+---
+
+## Backup and Restore
+
+### Backup database
+
+```bash
+docker compose exec postgres pg_dump -U bot_user bot_db > backup_$(date +%Y%m%d_%H%M%S).sql
+```
+
+### Restore database
+
+```bash
+docker compose exec -T postgres psql -U bot_user bot_db < backup_file.sql
+```
+
+---
+
+## Scaling and Rollback
+
+### Scale the bot service
+
+```bash
+docker compose up -d --scale discord-bot=2
+```
+
+### Rollback the bot
+
+```bash
+docker compose down
+docker compose up -d
+```
+
+### Emergency database rollback
+
+```bash
+docker compose stop discord-bot
+docker compose exec -T postgres psql -U bot_user bot_db < previous_backup.sql
+docker compose start discord-bot
+```
+
+---
 
 ## Troubleshooting
 
-### Common Issues
+### Check service logs
 
-#### Bot Not Starting
 ```bash
-# Check logs
-docker-compose logs discord-bot
-
-# Check environment variables
-docker-compose exec discord-bot env
-
-# Test database connection
-docker-compose exec discord-bot node -e "require('./src/app/database').databaseClient.connect().then(() => console.log('DB OK')).catch(console.error)"
+docker compose logs -f discord-bot
 ```
 
-#### Database Connection Issues
+### Confirm Redis
+
 ```bash
-# Check database status
-docker-compose exec postgres pg_isready -U bot_user -d bot_db
-
-# Check database logs
-docker-compose logs postgres
-
-# Test connection manually
-docker-compose exec postgres psql -U bot_user -d bot_db -c "SELECT version();"
+docker compose exec redis redis-cli -a "$env:REDIS_PASSWORD" ping
 ```
 
-#### Redis Connection Issues
-```bash
-# Check Redis status
-docker-compose exec redis redis-cli ping
+### Confirm PostgreSQL
 
-# Check Redis logs
-docker-compose logs redis
+```bash
+docker compose exec postgres pg_isready -U bot_user -d bot_db
 ```
 
-### Health Checks
+### Common fixes
 
-#### Application Health
-- **HTTP 200**: Service is healthy
+- Ensure `.env` values are correct and not committed to source control.
+- Confirm Docker uses `.env` if `env_file` is configured.
+- Verify `REDIS_URL` and `DATABASE_URL` use the Docker service names `redis` and `postgres`.
+
+---
+
+## Notes
+
+- `docker-compose.dev.yml` exposes host ports for local development only.
+- `docker-compose.yml` omits host port bindings for production-safe deployment.
+- Do not commit `.env` or secret values.
 - **HTTP 503**: Service is not ready
 - **Timeout**: Service is unresponsive
 
