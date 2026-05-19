@@ -1,6 +1,6 @@
 /**
  * Button handler for /giveaway list actions.
- * customId: giveawayList:end | giveawayList:edit | giveawayList:delete
+ * customId: giveawayList:end | giveawayList:edit | giveawayList:delete | giveawayList:entries
  */
 const {
   ModalBuilder,
@@ -17,9 +17,10 @@ module.exports = {
     const modal = new ModalBuilder()
       .setCustomId(`giveawayList_modal:${action}`)
       .setTitle(
-        action === 'end'    ? '⏹ End Giveaway (Emergency)' :
-        action === 'edit'   ? '✏️ Edit Giveaway' :
-        action === 'delete' ? '🗑️ Delete Giveaway' :
+        action === 'end'     ? '⏹ End Giveaway (Emergency)' :
+        action === 'edit'    ? '✏️ Edit Giveaway' :
+        action === 'delete'  ? '🗑️ Delete Giveaway' :
+        action === 'entries' ? '👥 View Giveaway Entries' :
         'Giveaway Action'
       );
 

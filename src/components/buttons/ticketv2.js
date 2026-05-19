@@ -6,6 +6,7 @@ const { clearOpenTicketChannelId } = require('../../services/ticketService');
 const { clearTimer } = require('../../services/ticketService');
 const { buildTicketReceiptEmbed, sendTicketReceiptDM } = require('../../utils/ticketReceipt');
 const { stampClosed, buildCloseReceiptEmbed, getSlaMetrics } = require('../../utils/ticketSla');
+const { updateProgressMessage, sendAutoTranscript } = require('../../services/ticketProgressService');
 
 function isStaff(member, settings) {
   const adminRoleId = settings?.tickets?.adminRoleId ?? null;
@@ -42,6 +43,15 @@ module.exports = {
       await setTicket(interaction.guildId, interaction.channelId, ticket);
 
       clearTimer(interaction.channelId);
+
+      // Update progress channel embed: status → 'claimed'
+      updateProgressMessage({
+        guild: interaction.guild,
+        channel: interaction.channel,
+        ticket,
+        status: 'claimed',
+        claimedBy: interaction.user.id,
+      }).catch(() => {});
 
       await interaction.reply({ content: `✅ Ticket claimed by ${interaction.user}` });
       return;
@@ -103,6 +113,23 @@ module.exports = {
       await deleteTicket(interaction.guildId, interaction.channelId);
       await clearOpenTicketChannelId(interaction.guildId, openerId).catch(() => {});
       clearTimer(interaction.channelId);
+
+      // Update progress channel embed: status → 'deleted' (shown as ✅ ĐÃ HOÀN THÀNH)
+      updateProgressMessage({
+        guild: interaction.guild,
+        channel: interaction.channel,
+        ticket: closedTicket,
+        status: 'deleted',
+        claimedBy: closedTicket.claimedBy ?? null,
+      }).catch(() => {});
+
+      // Auto-send HTML transcript to transcript channel (if configured)
+      sendAutoTranscript({
+        guild: interaction.guild,
+        channel: interaction.channel,
+        ticket: closedTicket,
+        closedBy: interaction.user.id,
+      }).catch(() => {});
 
       const suffix = dmResult.ok
         ? '\n📩 Receipt sent to the ticket opener via DM.'

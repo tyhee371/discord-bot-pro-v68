@@ -71,6 +71,7 @@ function defaults() {
       modRoleId: null,
       claimTimeoutSeconds: 60,
       transcriptChannelId: null,
+      progressChannelId: null,
       builders: {},
     },
     verify: {

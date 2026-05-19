@@ -103,13 +103,16 @@ class DistributedLock {
     try {
       return await fn();
     } finally {
-      // Release: only delete if we still own the lock (Lua CAS)
+      // Release: only delete if we still own the lock (Lua CAS).
+      // Pass keys and args as arrays — redis.js eval() and @redis/client v4
+      // both expect arrays.  The old positional (script, numKeys, key, arg)
+      // v3 signature caused the "Cannot read properties of undefined (reading
+      // 'toString')" TypeError seen in production logs.
       try {
         await redisClient.eval(
           `if redis.call("get",KEYS[1])==ARGV[1] then return redis.call("del",KEYS[1]) else return 0 end`,
-          1,
-          rkey,
-          token,
+          [rkey],   // keys array
+          [token],  // args array
         );
       } catch {
         // Best-effort release; TTL will expire it anyway

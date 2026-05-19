@@ -63,10 +63,37 @@ function pickWinners(entries, count) {
   return winners;
 }
 
+
+// ── Color resolver ────────────────────────────────────────────────────────────
+const COLOR_PRESETS = {
+  gold:   0xF1C40F,
+  red:    0xE74C3C,
+  blue:   0x3498DB,
+  green:  0x2ECC71,
+  purple: 0x9B59B6,
+  pink:   0xFF69B4,
+  cyan:   0x1ABC9C,
+  white:  0xFFFFFF,
+};
+
+/**
+ * Resolve a color from a preset name or hex string.
+ * Returns a numeric color value, or the default gold if invalid.
+ */
+function resolveColor(input, defaultColor = 0xF1C40F) {
+  if (!input || input === 'none') return defaultColor;
+  const preset = COLOR_PRESETS[String(input).toLowerCase()];
+  if (preset) return preset;
+  // Try hex string e.g. '#FF5733' or 'FF5733'
+  const hex = String(input).replace(/^#/, '');
+  const val = parseInt(hex, 16);
+  return (!isNaN(val) && hex.length === 6) ? val : defaultColor;
+}
+
 // ── Embed builders ────────────────────────────────────────────────────────────
 function buildActiveEmbed(g) {
   const embed = new EmbedBuilder()
-    .setColor(0xF1C40F)
+    .setColor(resolveColor(g.color, 0xF1C40F))
     .setTitle(`🎉 ${g.prize}`)
     .setTimestamp(g.endTime);
 
@@ -79,13 +106,14 @@ function buildActiveEmbed(g) {
   lines.push(`👤 **Hosted by:** <@${g.hostId}>`);
   embed.setDescription(lines.join('\n'));
   embed.setFooter({ text: `ID: ${g.id} • Click the button to enter!` });
+  if (g.imageUrl) embed.setImage(g.imageUrl);
 
   return embed;
 }
 
 function buildEndedEmbed(g, winners) {
   const embed = new EmbedBuilder()
-    .setColor(winners.length ? 0x2ECC71 : 0x95A5A6)
+    .setColor(winners.length ? resolveColor(g.color, 0x2ECC71) : 0x95A5A6)
     .setTitle(`🎊 ${g.prize} — Giveaway Ended`)
     .setTimestamp();
 
@@ -98,6 +126,7 @@ function buildEndedEmbed(g, winners) {
   lines.push(`👤 **Hosted by:** <@${g.hostId}>`);
   embed.setDescription(lines.join('\n'));
   embed.setFooter({ text: `ID: ${g.id}` });
+  if (g.imageUrl) embed.setImage(g.imageUrl);
 
   return embed;
 }
@@ -111,7 +140,75 @@ function buildEntryButton(giveawayId, disabled = false) {
   return new ActionRowBuilder().addComponents(btn);
 }
 
+
+// ── Entries pagination ────────────────────────────────────────────────────────
+const ENTRIES_PER_PAGE = 10;
+
+/**
+ * Build a paginated embed showing giveaway participants.
+ * @param {object} g       Giveaway data object
+ * @param {number} page    Zero-based page index
+ */
+function buildEntriesEmbed(g, page) {
+  const total   = g.entries.length;
+  const pages   = Math.ceil(total / ENTRIES_PER_PAGE);
+  const safePage = Math.max(0, Math.min(page, pages - 1));
+  const start   = safePage * ENTRIES_PER_PAGE;
+  const slice   = g.entries.slice(start, start + ENTRIES_PER_PAGE);
+
+  const lines = slice.map((userId, idx) =>
+    `${start + idx + 1}. <@${userId}>`
+  );
+
+  const embed = new EmbedBuilder()
+    .setColor(resolveColor(g.color, 0xF1C40F))
+    .setTitle(`👥 Entries — ${g.prize}`)
+    .setDescription(lines.join('\n') || '*(none)*')
+    .addFields(
+      { name: 'Total Entries', value: String(total),           inline: true },
+      { name: 'Winners',       value: String(g.winnerCount),   inline: true },
+      { name: 'Status',        value: g.ended ? '🔴 Ended' : '🟢 Active', inline: true },
+    )
+    .setFooter({ text: `Page ${safePage + 1}/${pages} • Giveaway ID: ${g.id}` })
+    .setTimestamp();
+
+  return embed;
+}
+
+/**
+ * Build the Previous / Next pagination row for the entries embed.
+ * @param {string} giveawayId  Message ID of the giveaway
+ * @param {number} page        Current zero-based page
+ * @param {number} total       Total number of entries
+ */
+function buildEntriesRow(giveawayId, page, total) {
+  const pages = Math.ceil(total / ENTRIES_PER_PAGE);
+
+  const prev = new ButtonBuilder()
+    .setCustomId(`giveawayEntries:${giveawayId}:${page - 1}`)
+    .setLabel('◀ Previous')
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(page <= 0);
+
+  const counter = new ButtonBuilder()
+    .setCustomId(`giveawayEntries_noop:${giveawayId}:${page}`)
+    .setLabel(`Page ${page + 1} / ${pages}`)
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(true);
+
+  const next = new ButtonBuilder()
+    .setCustomId(`giveawayEntries:${giveawayId}:${page + 1}`)
+    .setLabel('Next ▶')
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(page >= pages - 1);
+
+  return new ActionRowBuilder().addComponents(prev, counter, next);
+}
+
 module.exports = {
+  resolveColor,
+  buildEntriesEmbed,
+  buildEntriesRow,
   parseDuration,
   formatTimeLeft,
   formatTimestamp,

@@ -13,6 +13,13 @@
  *
  * Requires DATABASE_URL in environment (or .env file).
  *
+ * MIGRATE_DATABASE_URL (optional, also read from .env):
+ *   Override the connection string used only by this script.
+ *   Useful when running migrate from the host machine while the bot uses
+ *   Docker service names (e.g. 'postgres') or host.docker.internal.
+ *   Example .env entry:
+ *     MIGRATE_DATABASE_URL=postgresql://bot_user:pass@127.0.0.1:5432/bot_db
+ *
  * This is intentionally simple — no framework dependency.  If you need
  * rollbacks, timestamps, or team-wide tooling, swap this for node-pg-migrate
  * or db-migrate.
@@ -39,10 +46,16 @@ if (fs.existsSync(envPath)) {
 
 const { Pool } = require('pg');
 
-const DATABASE_URL = process.env.DATABASE_URL;
+// MIGRATE_DATABASE_URL takes priority over DATABASE_URL so you can point
+// migrations at 127.0.0.1 (host-accessible) while the bot uses 'postgres'
+// (Docker-internal service name) without changing DATABASE_URL.
+const DATABASE_URL = process.env.MIGRATE_DATABASE_URL || process.env.DATABASE_URL;
 if (!DATABASE_URL) {
   console.error('[migrate] DATABASE_URL is not set. Skipping migration (SQLite mode).');
   process.exit(0);
+}
+if (process.env.MIGRATE_DATABASE_URL) {
+  console.log('[migrate] Using MIGRATE_DATABASE_URL (host override active).');
 }
 
 // Pool is created inside main() after IPv4 DNS resolution
@@ -96,24 +109,30 @@ async function autoMarkIfAlreadyApplied(client, applied, files) {
 }
 
 async function main() {
-  // Resolve DATABASE_URL hostname to IPv4 before creating the pool.
-  // Pool must be created AFTER resolution — updating pool.options after
-  // creation has no effect on already-queued connections.
   const { hostname } = new URL(DATABASE_URL.replace(/^postgresql/, 'http'));
   let resolvedUrl = DATABASE_URL;
-  try {
-    const dns = require('node:dns').promises;
-    const result = await dns.lookup(hostname, { family: 4 });
-    if (result?.address) {
-      // Use URL object to replace hostname safely — naive string.replace()
-      // corrupts 'postgresql://...' when hostname is 'postgres' because
-      // 'postgres' appears inside 'postgresql' and gets replaced there too.
-      const urlObj = new URL(DATABASE_URL.replace(/^postgresql/, 'http'));
-      urlObj.hostname = result.address;
-      resolvedUrl = urlObj.toString().replace(/^http/, 'postgresql');
-      console.log(`[migrate] Resolved ${hostname} → ${result.address}`);
-    }
-  } catch (_) {}
+
+  // If the hostname is already a numeric IPv4 address, skip DNS lookup entirely.
+  // This avoids the extra round-trip and the Windows DNS quirk where
+  // host.docker.internal resolves to an IP but Docker Desktop's NAT layer
+  // on Windows still drops the connection before PostgreSQL can respond.
+  const isIpv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
+
+  if (!isIpv4) {
+    try {
+      const dns = require('node:dns').promises;
+      const result = await dns.lookup(hostname, { family: 4 });
+      if (result?.address) {
+        // Use URL object to replace hostname safely — naive string.replace()
+        // corrupts 'postgresql://...' when hostname is 'postgres' because
+        // 'postgres' appears inside 'postgresql' and gets replaced there too.
+        const urlObj = new URL(DATABASE_URL.replace(/^postgresql/, 'http'));
+        urlObj.hostname = result.address;
+        resolvedUrl = urlObj.toString().replace(/^http/, 'postgresql');
+        console.log(`[migrate] Resolved ${hostname} → ${result.address}`);
+      }
+    } catch (_) {}
+  }
 
   const pool = new Pool({
     connectionString: resolvedUrl,

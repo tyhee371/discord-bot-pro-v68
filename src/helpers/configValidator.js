@@ -96,6 +96,20 @@ async function validateTickets(guild, settings, me, results) {
     }
   }
 
+  // Validate progress channel if set
+  if (cfg.progressChannelId) {
+    const ch = await resolveChannel(guild, cfg.progressChannelId);
+    if (!ch) {
+      results.push(result('error', 'Tickets', `Progress channel \`${cfg.progressChannelId}\` not found.`, 'Run `/ticketlog set` to reassign.'));
+    } else if (!botCanSend(ch, me)) {
+      results.push(result('error', 'Tickets', `Bot cannot send to progress channel #${ch.name}.`, `Grant bot Send Messages + View Channel in #${ch.name}.`));
+    } else if (!botCanEmbed(ch, me)) {
+      results.push(result('warn', 'Tickets', `Bot lacks Embed Links in progress channel #${ch.name}. Progress embeds may fail.`, `Grant Embed Links to bot in #${ch.name}.`));
+    } else {
+      results.push(result('ok', 'Tickets', `Progress channel #${ch.name} is reachable.`));
+    }
+  }
+
   // Validate staff roles
   for (const roleKey of ['adminRoleId', 'modRoleId']) {
     const roleId = cfg[roleKey];

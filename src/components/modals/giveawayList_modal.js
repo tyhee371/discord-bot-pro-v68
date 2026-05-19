@@ -3,6 +3,7 @@
  * customId: giveawayList_modal:<action>
  */
 const { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, MessageFlags } = require('discord.js');
+const { buildEntriesEmbed, buildEntriesRow } = require('../../services/giveawayHelpers');
 const { getGiveaway, saveGiveaway, deleteGiveaway, removeFromIndex } = require('../../utils/giveawayStore');
 const { clearEnd } = require('../../utils/giveawayTimer');
 const { endGiveaway } = require('../../utils/giveawayEnd');
@@ -155,6 +156,24 @@ module.exports = {
       return interaction.editReply(`🗑️ Giveaway **${g.prize}** has been deleted and removed.`);
     }
 
-    return interaction.editReply('❌ Unknown action.');
+
+    // ── ENTRIES ───────────────────────────────────────────────────────────────
+    if (action === 'entries') {
+      const total = g.entries.length;
+
+      if (total === 0) {
+        return interaction.editReply(
+          `📭 **${g.prize}** has no entries yet.`
+        );
+      }
+
+      const page = 0;
+      const embed = buildEntriesEmbed(g, page);
+      const row   = buildEntriesRow(g.id, page, total);
+
+      return interaction.editReply({ embeds: [embed], components: [row] });
+    }
+
+        return interaction.editReply('❌ Unknown action.');
   },
 };

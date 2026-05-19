@@ -14,6 +14,14 @@ const { logger } = require('../helpers/logger');
  *   configures retries via socket.reconnectStrategy.  The old option was
  *   silently ignored.  Fixed to use the correct v4 API.
  * - CRLF line endings converted to LF.
+ *
+ * Phase 5 fix:
+ * - Resolve REDIS_URL hostname to IPv4 before connecting, matching the same
+ *   pattern used in database.js.  On Windows + Docker Desktop, Node's default
+ *   DNS resolution tries IPv6 first which Docker doesn't forward, causing every
+ *   connection attempt to time out.  Using dns.lookup() with { family: 4 }
+ *   forces the OS hosts file (where Docker Desktop registers host.docker.internal)
+ *   so the correct IPv4 address is used immediately.
  */
 
 function isValidRedisUrl(url) {
@@ -26,6 +34,33 @@ function isValidRedisUrl(url) {
   }
 }
 
+/**
+ * Resolve the hostname in a redis:// URL to an IPv4 address using the OS
+ * hosts file (dns.lookup).  Returns the original URL unchanged on any error.
+ */
+async function resolveRedisUrl(redisUrl) {
+  try {
+    const parsed = new URL(redisUrl);
+    const hostname = parsed.hostname;
+
+    // Skip resolution if already a numeric IPv4 address — no lookup needed.
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname)) return redisUrl;
+
+    const dns = require('node:dns').promises;
+    // Use lookup() not resolve4() — on Windows, resolve4() queries the DNS
+    // server directly (which Docker doesn't support for host.docker.internal),
+    // while lookup() uses the OS hosts file where Docker Desktop registers it.
+    const result = await dns.lookup(hostname, { family: 4 });
+    if (!result?.address || result.address === hostname) return redisUrl;
+
+    parsed.hostname = result.address;
+    logger.info(`[REDIS] Resolved ${hostname} → ${result.address} (IPv4 forced)`);
+    return parsed.toString();
+  } catch (_) {
+    return redisUrl; // hostname already an IP or lookup failed — use as-is
+  }
+}
+
 class RedisClient {
   constructor() {
     this.client = null;
@@ -33,9 +68,9 @@ class RedisClient {
   }
 
   async connect() {
-    const redisUrl = process.env.REDIS_URL;
+    const rawUrl = process.env.REDIS_URL;
 
-    if (!isValidRedisUrl(redisUrl)) {
+    if (!isValidRedisUrl(rawUrl)) {
       logger.info(
         '[REDIS] REDIS_URL is absent or invalid — skipping Redis connection. ' +
         'Phase 4 features (distributed rate-limiting, shared state) will use ' +
@@ -43,6 +78,10 @@ class RedisClient {
       );
       return;
     }
+
+    // Resolve hostname to IPv4 before creating the client — fixes the
+    // Windows + Docker Desktop timeout where IPv6 is tried first.
+    const redisUrl = await resolveRedisUrl(rawUrl);
 
     try {
       let _errorLogged = false;  // suppress repeated ECONNREFUSED spam
@@ -207,6 +246,19 @@ class RedisClient {
     } catch (error) {
       logger.warn({ key, err: error }, '[REDIS] TTL failed');
       return -2;
+    }
+  }
+
+  async eval(script, keys, args) {
+    if (!this.isAvailable()) return null;
+    try {
+      // Both keys and args must be arrays of strings for @redis/client v4.
+      const keysArray = Array.isArray(keys) ? keys.map(String) : keys != null ? [String(keys)] : [];
+      const argsArray = Array.isArray(args) ? args.map(String) : args != null ? [String(args)] : [];
+      return await this.client.eval(script, { keys: keysArray, arguments: argsArray });
+    } catch (error) {
+      logger.warn({ err: error }, '[REDIS] EVAL failed');
+      return null;
     }
   }
 

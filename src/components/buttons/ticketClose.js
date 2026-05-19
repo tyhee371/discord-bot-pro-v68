@@ -11,6 +11,7 @@ const { getGuildSettings } = require('../../utils/settings');
 const { getTicket, setTicket } = require('../../services/ticketService');
 const { clearOpenTicketChannelId } = require('../../services/ticketService');
 const { buildTicketReceiptEmbed, sendTicketReceiptDM } = require('../../utils/ticketReceipt');
+const { updateProgressMessage } = require('../../services/ticketProgressService');
 
 async function makeTranscript(channel) {
   const allMessages = [];
@@ -124,6 +125,15 @@ module.exports = {
     if (openerId) {
       await clearOpenTicketChannelId(interaction.guildId, openerId).catch(() => {});
     }
+
+    // Update progress channel embed: status → 'closed'
+    updateProgressMessage({
+      guild: interaction.guild,
+      channel: interaction.channel,
+      ticket,
+      status: 'closed',
+      claimedBy: ticket.claimedBy ?? null,
+    }).catch(() => {});
 
     // Add reopen/delete buttons
     const row = new ActionRowBuilder().addComponents(

@@ -1,4 +1,5 @@
 const { stampOpened } = require('../../utils/ticketSla');
+const { postProgressMessage } = require('../../services/ticketProgressService');
 
 const {
   ChannelType,
@@ -142,6 +143,17 @@ module.exports = {
 
     // Auto-claim rotation: ping staff up to 3 times (edits the FIRST ticket message).
     attemptClaim({ guild: interaction.guild, channel, settings, openerId: interaction.user.id, attempt: 1, attemptedIds: [] })
+      .catch(() => {});
+
+    // Post a live progress entry in the progress channel (if configured).
+    // Re-fetch so the stored ticket includes the final messageId before we snapshot it.
+    getTicket(interaction.guildId, channel.id)
+      .then((finalTicket) => postProgressMessage({
+        guild: interaction.guild,
+        channel,
+        ticket: finalTicket ?? { openerId: interaction.user.id, typeLabel, typeValue, createdAt: now },
+        status: 'open',
+      }))
       .catch(() => {});
 
     return interaction.editReply(`✅ Ticket created: ${channel}`);

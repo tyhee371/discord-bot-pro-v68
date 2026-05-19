@@ -71,11 +71,13 @@ class SharedStateManager {
     // Fallback to memory only
     this.memoryStore.set(redisKey, value);
 
-    // Set up TTL for memory store if specified
-    if (ttlSeconds) {
+    // Set up TTL for memory store if specified.
+    // Guard against negative/zero TTL (e.g. from a near-expiry cooldown calculation)
+    // which produces a TimeoutNegativeWarning in Node 22+ and fires immediately.
+    if (ttlSeconds && ttlSeconds > 0) {
       setTimeout(() => {
         this.memoryStore.delete(redisKey);
-      }, ttlSeconds * 1000);
+      }, Math.max(1, ttlSeconds * 1000));
     }
 
     return true;
@@ -128,10 +130,10 @@ class SharedStateManager {
     // Fallback to memory - not atomic but better than nothing
     if (!this.memoryStore.has(redisKey)) {
       this.memoryStore.set(redisKey, value);
-      if (ttlSeconds) {
+      if (ttlSeconds && ttlSeconds > 0) {
         setTimeout(() => {
           this.memoryStore.delete(redisKey);
-        }, ttlSeconds * 1000);
+        }, Math.max(1, ttlSeconds * 1000));
       }
       return true;
     }

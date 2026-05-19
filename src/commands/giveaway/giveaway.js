@@ -25,10 +25,8 @@ const {
 } = require('../../utils/giveawayHelpers');
 
 // ── Restore timers on bot restart ─────────────────────────────────────────────
-// Called from the ready event after client is fully loaded
 async function restoreTimers(client) {
   try {
-    // We can't iterate Keyv, so we use guildId index per guild
     for (const [guildId] of client.guilds.cache) {
       const ids = await getGuildGiveawayIds(guildId);
       for (const messageId of ids) {
@@ -36,7 +34,6 @@ async function restoreTimers(client) {
         if (!g || g.ended) continue;
         const delay = g.endTime - Date.now();
         if (delay <= 0) {
-          // Already expired while bot was offline  -  end now
           await endGiveaway(client, messageId, g.channelId, guildId);
         } else if (!hasTimer(messageId)) {
           schedulEnd(messageId, delay, () =>
@@ -52,7 +49,7 @@ async function restoreTimers(client) {
 
 module.exports = {
   restoreTimers,
-  defer: false,      // We handle defer manually — /giveaway create uses showModal(), others defer themselves
+  defer: false,
   ephemeral: true,
   data: new SlashCommandBuilder()
     .setName('giveaway')
@@ -120,9 +117,8 @@ module.exports = {
     // ── /giveaway create ──────────────────────────────────────────────────────
     if (sub === 'create') {
       const targetChannel = interaction.options.getChannel('channel') ?? interaction.channel;
-      const requiredRole = interaction.options.getRole('required_role');
+      const requiredRole  = interaction.options.getRole('required_role');
 
-      // Store channel + role in customId so modal handler can read them
       const roleId = requiredRole?.id ?? 'none';
       const chanId = targetChannel.id;
 
@@ -161,17 +157,27 @@ module.exports = {
         .setPlaceholder('1')
         .setMaxLength(2);
 
+      // 5th row: color + image URL in key=value format (same pattern as /embed command)
+      const extras = new TextInputBuilder()
+        .setCustomId('extras')
+        .setLabel('Color & Image (optional)')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(false)
+        .setPlaceholder('color=#FF5733\nimage=https://example.com/banner.png')
+        .setMaxLength(500);
+
       modal.addComponents(
         new ActionRowBuilder().addComponents(prize),
         new ActionRowBuilder().addComponents(description),
         new ActionRowBuilder().addComponents(duration),
         new ActionRowBuilder().addComponents(winners),
+        new ActionRowBuilder().addComponents(extras),
       );
 
       return interaction.showModal(modal);
     }
 
-    // All other subcommands need a reply — defer now (create already returned via showModal above)
+    // All other subcommands defer
     if (!interaction.deferred && !interaction.replied) {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     }
@@ -218,26 +224,22 @@ module.exports = {
         .setColor(g.ended ? 0x95A5A6 : 0xF1C40F)
         .setTitle(`📊 Giveaway Summary  -  ${g.prize}`)
         .addFields(
-          { name: 'Status', value: status, inline: true },
-          { name: 'Total Entries', value: String(g.entries.length), inline: true },
-          { name: 'Winners', value: String(g.winnerCount), inline: true },
-          { name: 'Hosted by', value: `<@${g.hostId}>`, inline: true },
-          { name: 'End Time', value: formatTimestampFull(g.endTime), inline: true },
-          { name: 'Channel', value: `<#${g.channelId}>`, inline: true },
+          { name: 'Status',        value: status,                        inline: true },
+          { name: 'Total Entries', value: String(g.entries.length),      inline: true },
+          { name: 'Winners',       value: String(g.winnerCount),         inline: true },
+          { name: 'Hosted by',     value: `<@${g.hostId}>`,             inline: true },
+          { name: 'End Time',      value: formatTimestampFull(g.endTime), inline: true },
+          { name: 'Channel',       value: `<#${g.channelId}>`,           inline: true },
         );
 
       if (g.requiredRoleId) {
         embed.addFields({ name: 'Required Role', value: `<@&${g.requiredRoleId}>`, inline: true });
       }
-
       if (g.ended && g.winners?.length) {
         embed.addFields({ name: 'Actual Winners', value: g.winners.map(id => `<@${id}>`).join(', ') });
       }
-
-      if (g.description) {
-        embed.setDescription(g.description);
-      }
-
+      if (g.description) embed.setDescription(g.description);
+      if (g.imageUrl)    embed.setImage(g.imageUrl);
       embed.setFooter({ text: `Message ID: ${messageId}` });
 
       return interaction.editReply({ embeds: [embed] });
@@ -246,8 +248,6 @@ module.exports = {
     // ── /giveaway list ────────────────────────────────────────────────────────
     if (sub === 'list') {
       const ids = await getGuildGiveawayIds(interaction.guildId);
-
-      // Load all giveaways and filter out ones that no longer exist in DB
       const giveaways = (
         await Promise.all(ids.map(id => getGiveaway(id)))
       ).filter(Boolean);
@@ -256,35 +256,28 @@ module.exports = {
         return interaction.editReply('📭 No giveaways found for this server. Use `/giveaway create` to start one.');
       }
 
-      // Sort: active first, then ended; within each group newest first
       giveaways.sort((a, b) => {
         if (a.ended !== b.ended) return a.ended ? 1 : -1;
         return b.endTime - a.endTime;
       });
 
-      // Build description lines (max 10 shown at once to avoid embed limit)
       const shown = giveaways.slice(0, 10);
       const lines = shown.map((g, idx) => {
-        const status = g.ended ? '🔴' : '🟢';
+        const status  = g.ended ? '🔴' : '🟢';
         const entries = g.entries.length;
         const timeStr = g.ended ? `ended ${formatTimestamp(g.endTime)}` : `ends ${formatTimestamp(g.endTime)}`;
         return [
           `${idx + 1}. ${status} **${g.prize}**`,
           `   \`${g.id}\` • ${timeStr} • ${entries} entr${entries === 1 ? 'y' : 'ies'} • ${g.winnerCount} winner${g.winnerCount > 1 ? 's' : ''} • <@${g.hostId}>`,
         ].join('\n');
-
       });
 
-      if (giveaways.length > 10) {
-        lines.push(`\n*...and ${giveaways.length - 10} more.*`);
-
-      }
+      if (giveaways.length > 10) lines.push(`\n*...and ${giveaways.length - 10} more.*`);
 
       const embed = new EmbedBuilder()
         .setColor(0xF1C40F)
         .setTitle('🎉 Giveaways  -  This Server')
         .setDescription(lines.join('\n\n'))
-
         .setFooter({ text: `${giveaways.length} total • Use the buttons below to manage` });
 
       const row = new ActionRowBuilder().addComponents(
@@ -300,6 +293,10 @@ module.exports = {
           .setCustomId('giveawayList:delete')
           .setLabel('🗑️ Delete')
           .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId('giveawayList:entries')
+          .setLabel('👥 Entries')
+          .setStyle(ButtonStyle.Primary),
       );
 
       return interaction.editReply({ embeds: [embed], components: [row] });

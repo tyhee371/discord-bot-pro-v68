@@ -2,6 +2,7 @@ const { stampClaimed } = require('./ticketSla');
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require('discord.js');
 const { getStaffCandidates, chooseStaff } = require('../helpers/staffV2');
 const { getTicket, setTicket } = require('../stores/ticketData');
+const { cancelProgressMessage } = require('./ticketProgressService');
 
 const timers = new Map(); // channelId -> timeout
 
@@ -103,7 +104,13 @@ async function attemptClaim({ guild, channel, settings, openerId, attempt = 1, a
   const timeoutSeconds = getClaimTimeoutSeconds(settings);
 
   if (attempt > 3) {
-    // Final outcome: unclaimed
+    // Final outcome: unclaimed — update progress embed to ❌ ĐƠN BỊ HUỶ first,
+    // then notify the opener and auto-delete the channel.
+    const currentTicket = await getTicket(guild.id, channel.id).catch(() => ticket);
+
+    // Update the progress channel embed to show cancelled status
+    cancelProgressMessage({ guild, channel, ticket: currentTicket ?? ticket }).catch(() => {});
+
     const opener = await guild.members.fetch(openerId).catch(() => null);
     if (opener) {
       opener.user

@@ -246,37 +246,46 @@ async function ensureConnection(guild, voiceChannel, st) {
     }
     try {
       if (newState.status === VoiceConnectionStatus.Disconnected) {
-        // Try to reconnect briefly
+        // Try to reconnect. We give a generous 15-second window because a
+        // Discord shard reconnect briefly puts voice connections into
+        // Disconnected state — a tight 5s window was enough to mis-classify
+        // a shard resume as a hard disconnect, destroying the connection and
+        // stopping playback mid-song.
         try {
           await Promise.race([
-            entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
-            entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+            entersState(connection, VoiceConnectionStatus.Signalling,  15_000),
+            entersState(connection, VoiceConnectionStatus.Connecting,  15_000),
+            entersState(connection, VoiceConnectionStatus.Ready,       15_000),
           ]);
-          // Reconnected successfully
+          // Transitioned away from Disconnected — still alive, do nothing.
           return;
         } catch {
-          // Hard disconnect - destroy connection
+          // Genuinely unreachable after 15s — treat as hard disconnect.
           try { connection.destroy(); } catch {}
           st.connection = null;
 
-          // If 24/7 is on, attempt to rejoin after a brief delay
-          if (st.stay247 && st.voiceChannelId && st.client) {
+          const wasPlaying = !!st.current;
+
+          // Auto-rejoin when mid-song (regardless of 24/7 mode), and always
+          // when 24/7 is on. This means a shard reconnect that takes >15s or
+          // a real kick will still resume music automatically.
+          if ((wasPlaying || st.stay247) && st.voiceChannelId && st.client) {
             safeTimeout(async () => {
               try {
-                if (st.connection) return; // already reconnected
-                const guild = st.client.guilds.cache.get(st.guildId);
-                const vc = guild?.channels.cache.get(st.voiceChannelId);
+                if (st.connection) return; // already reconnected elsewhere
+                const g  = st.client.guilds.cache.get(st.guildId);
+                const vc = g?.channels.cache.get(st.voiceChannelId);
                 if (!vc) return;
-                await ensureConnection(guild, vc, st);
-                logger.info({ guildId: st.guildId }, '[MUSIC] 24/7 auto-rejoined voice channel');
+                await ensureConnection(g, vc, st);
+                logger.info({ guildId: st.guildId, was247: st.stay247, wasPlaying }, '[MUSIC] Auto-rejoined voice channel after disconnect');
                 if (st.current) {
-                  // Re-queue current track at front so playback resumes
+                  // Re-queue the interrupted track at front so playback resumes
                   st.queue.unshift(st.current);
                   st.current = null;
                   void playNextInternal(st).catch(logger.error);
                 }
               } catch (rejoErr) {
-                logger.error({ err: rejoErr, guildId: st.guildId }, '[MUSIC] 24/7 rejoin failed');
+                logger.error({ err: rejoErr, guildId: st.guildId }, '[MUSIC] Auto-rejoin failed');
               }
             }, 3_000);
           }
@@ -414,9 +423,21 @@ function getYtDlpBaseArgs() {
   const args = [];
 
   // ── Cookie file (highest priority — works headlessly on servers) ──────────
-  const cookiesFile = process.env.YTDLP_COOKIES_FILE;
+  // Resolve relative paths against the project root (two levels up from src/utils/)
+  // so ./cookies.txt works regardless of what the process cwd is.
+  const rawCookiesPath = process.env.YTDLP_COOKIES_FILE;
+  const cookiesFile = rawCookiesPath
+    ? (require('node:path').isAbsolute(rawCookiesPath)
+        ? rawCookiesPath
+        : require('node:path').resolve(__dirname, '..', '..', rawCookiesPath))
+    : null;
+
   if (cookiesFile && fs.existsSync(cookiesFile)) {
     args.push('--cookies', cookiesFile);
+  } else if (rawCookiesPath && cookiesFile && !fs.existsSync(cookiesFile)) {
+    // Log once at startup is better, but a debug line here helps diagnose
+    // "cookies set but not found" silently failing to auth
+    logger.warn({ path: cookiesFile }, '[MUSIC] YTDLP_COOKIES_FILE is set but file not found — playing without cookies (bot detection may apply)');
   }
   // ── Browser cookies (alternative — requires browser on same machine) ──────
   else if (process.env.YTDLP_COOKIES_BROWSER) {
@@ -507,11 +528,23 @@ async function tryCreateYtDlpResource(st, url) {
     '--no-playlist',
     '--no-warnings',
     '--no-check-certificates',
-    '--no-part',               // don't write .part files
+    '--no-part',                // don't write .part files
     '--extractor-retries', '3',
-    '--retries', '3',
-    '-o', '-',                 // pipe raw audio bytes to stdout
-    ...getYtDlpBaseArgs(),     // cookies / PO token (from env — see getYtDlpBaseArgs)
+    '--retries', '10',          // retry failed HTTP requests up to 10 times
+    '--fragment-retries', '10', // retry individual fragments; YouTube CDN signed URLs can
+                                // expire mid-stream for songs >15 min — without this yt-dlp
+                                // gives up and the stdout pipe closes silently
+    // NOTE: --retry-sleep and --concurrent-fragments were intentionally removed.
+    // --retry-sleep fragment:exp=... syntax requires yt-dlp ≥2023.10 and is not
+    // recognised by the currently distributed binary, causing an immediate fatal
+    // error before any audio is fetched.  The fragment-retries=10 above already
+    // handles retry resilience sufficiently.
+    // --concurrent-fragments > 1 is also incompatible with stdout piping because
+    // it interleaves fragment bytes and corrupts the audio stream.
+    '--http-chunk-size', '10M', // request 10 MB chunks; reduces signed URL refreshes
+                                // needed for long tracks and avoids mid-song CDN cuts
+    '-o', '-',                  // pipe raw audio bytes to stdout
+    ...getYtDlpBaseArgs(),      // cookies / PO token (from env — see getYtDlpBaseArgs)
     url,
   ];
 
@@ -534,11 +567,19 @@ async function tryCreateYtDlpResource(st, url) {
     demuxProbe(child.stdout)
       .then((probe) => {
         st.activeProc = child;
-        resolve(createAudioResource(probe.stream, { inputType: probe.type, inlineVolume: true }));
+        const resource = createAudioResource(probe.stream, { inputType: probe.type, inlineVolume: true });
+        // Attach a getter so startPlayback can include real yt-dlp stderr in
+        // "ended too quickly" errors, revealing the true cause (403, bot-check, etc.)
+        resource._ytdlpStderr = () => stderr.trim().split('\n').slice(-3).join(' | ').slice(0, 300);
+        resolve(resource);
       })
       .catch((err) => {
         try { child.kill('SIGKILL'); } catch {}
-        const wrapped = new Error(`yt-dlp stream failed: ${stderr || err.message}`);
+        // Include yt-dlp stderr in the error so callers can see the real reason
+        // (e.g. "Sign in to confirm you're not a bot", "HTTP Error 403", "Video unavailable")
+        // rather than just "yt-dlp stream failed".
+        const detail = stderr.trim().split('\n').slice(-3).join(' | ').slice(0, 300);
+        const wrapped = new Error(`yt-dlp stream failed${detail ? `: ${detail}` : `: ${err.message}`}`);
         wrapped.cause = err;
         reject(wrapped);
       });
@@ -552,26 +593,38 @@ async function tryCreateYtDlpResource(st, url) {
 
 async function tryCreateYtDlpFfmpegResource(st, url) {
   const cmd = getYtDlpCommand();
+
+  // Get the best direct audio CDN URL via yt-dlp -g.
+  // Prefer m4a/mp4 audio over webm/opus — m4a uses standard HTTP range requests
+  // which ffmpeg can reconnect to natively.  webm/opus from YouTube is often
+  // served as a DASH manifest (multiple segments) which -reconnect_at_eof cannot
+  // handle because the "EOF" is just the end of one segment, not the full track.
   const directUrl = await new Promise((resolve, reject) => {
-    const child = spawn(cmd, ['--no-warnings', '--no-playlist', '--no-check-certificates', '--extractor-retries', '3', '-f', 'bestaudio', '-g', ...getYtDlpBaseArgs(), url], {
-      windowsHide: true,
-    });
+    const child = spawn(cmd, [
+      '--no-warnings',
+      '--no-playlist',
+      '--no-check-certificates',
+      '--extractor-retries', '3',
+      '-f', 'bestaudio[ext=m4a]/bestaudio[ext=mp4]/bestaudio[protocol=https]/bestaudio',
+      '-g',
+      ...getYtDlpBaseArgs(),
+      url,
+    ], { windowsHide: true });
+
     let out = '';
     let err = '';
-    child.stdout.on('data', (d) => {
-      out += String(d || '');
-    });
-    child.stderr.on('data', (d) => {
-      err += String(d || '');
-    });
+    child.stdout.on('data', (d) => { out += String(d || ''); });
+    child.stderr.on('data', (d) => { err += String(d || ''); });
     child.once('error', reject);
     child.once('close', (code) => {
-      const first = out
+      // yt-dlp -g may return multiple lines (e.g. video + audio for DASH).
+      // We want only the audio URL — take the last https:// line.
+      const urls = out
         .split(/\r?\n/)
         .map((s) => s.trim())
-        .find((s) => /^https?:\/\//i.test(s));
-      if (first) return resolve(first);
-      reject(new Error(err || `yt-dlp -g failed with code ${code}`));
+        .filter((s) => /^https?:\/\//i.test(s));
+      if (urls.length > 0) return resolve(urls[urls.length - 1]);
+      reject(new Error(err.trim() || `yt-dlp -g failed with code ${code}`));
     });
   });
 
@@ -579,28 +632,34 @@ async function tryCreateYtDlpFfmpegResource(st, url) {
     throw new Error('ffmpeg-static binary not found');
   }
 
-  // Transcode to raw PCM to avoid intermittent opus demux aborts with direct piping.
+  // Pass the CDN URL directly to ffmpeg.
+  // Key reconnect flags:
+  //   -reconnect 1            — reconnect on connection drop
+  //   -reconnect_streamed 1   — reconnect even on streamed (non-seekable) sources
+  //   -reconnect_at_eof 1     — RE-REQUEST the URL when EOF is reached mid-stream
+  //                             This is the critical flag for YouTube's ~90-min
+  //                             signed URL expiry: without it, ffmpeg stops when the
+  //                             first signed URL chunk ends (~90 min) and never asks
+  //                             for a new one.  With it, ffmpeg automatically fetches
+  //                             a refreshed URL continuation and keeps playing.
+  //   -reconnect_delay_max 10 — wait up to 10s between reconnect attempts
+  //   -reconnect_on_http_error 4xx,5xx — retry on server errors (403 CDN refresh)
   const ff = spawn(
     ffmpegPath,
     [
       '-hide_banner',
-      '-loglevel',
-      'error',
-      '-reconnect',
-      '1',
-      '-reconnect_streamed',
-      '1',
-      '-reconnect_delay_max',
-      '5',
-      '-i',
-      directUrl,
-      '-vn',
-      '-f',
-      's16le',
-      '-ar',
-      '48000',
-      '-ac',
-      '2',
+      '-loglevel', 'error',
+      // HTTP reconnect options — must come BEFORE -i
+      '-reconnect',              '1',
+      '-reconnect_streamed',     '1',
+      '-reconnect_at_eof',       '1',
+      '-reconnect_delay_max',    '10',
+      '-reconnect_on_http_error','4xx,5xx',
+      '-i', directUrl,
+      '-vn',            // no video
+      '-f', 's16le',    // raw PCM — avoids opus demux issues on some containers
+      '-ar', '48000',   // Discord requires 48 kHz
+      '-ac', '2',       // stereo
       'pipe:1',
     ],
     { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
@@ -1029,8 +1088,9 @@ async function playTrackInternal(st, track) {
   cleanupActiveProcess(st);
 
   const errors = [];
-  const startupTimeoutMs = 12_000;
-  const minStablePlaybackMs = 3_000;
+  const startupTimeoutMs = 15_000;  // increased from 12s — slow connections need more time to buffer
+  const minStablePlaybackMs = 5_000; // increased from 3s — give streams more time before declaring them bad
+                                     // YouTube Mix/Radio CDN URLs can take 3-4s to deliver first bytes
 
   async function startPlayback(resource, sourceLabel) {
     if (!resource) throw new Error('Audio resource was not created.');
@@ -1055,7 +1115,11 @@ async function playTrackInternal(st, track) {
           settled = true;
           clearTimeout(timer);
           st.player.off('stateChange', onState);
-          reject(new Error(`${sourceLabel} stream ended too quickly after start`));
+          reject(new Error(`${sourceLabel} stream ended too quickly after start${
+            typeof resource._ytdlpStderr === 'function' && resource._ytdlpStderr()
+              ? ` (${resource._ytdlpStderr()})`
+              : ''
+          }`));
         }
       };
       const timer = setTimeout(() => {
@@ -1068,10 +1132,36 @@ async function playTrackInternal(st, track) {
     });
   }
 
-  // ── Strategy 1: yt-dlp (most reliable for YouTube, avoids signature issues) ──
+  // ── Strategy routing: long tracks go ffmpeg-first ────────────────────────
+  // YouTube signed CDN URLs expire after ~90 minutes.  When yt-dlp pipes raw
+  // bytes (-o -), Node holds the open pipe — when the URL expires the pipe
+  // simply closes and @discordjs/voice sees the resource as ended.
+  // ffmpeg with -reconnect_at_eof re-requests a fresh URL automatically, so
+  // for tracks longer than 30 minutes we skip the raw yt-dlp pipe entirely
+  // and go straight to the ffmpeg strategy which handles reconnects natively.
+  const durationSecs = track.duration ?? track.durationSeconds ?? 0;
+  const isLongTrack  = durationSecs > 30 * 60; // > 30 minutes
+
+  if (isLongTrack && isYouTubeUrl(track.url)) {
+    logger.info({ track: track.title, durationSecs }, '[MUSIC] Long track detected — using ffmpeg strategy directly (avoids 90-min CDN URL expiry)');
+    try {
+      const resource = await ytDlpPool.run(() => tryCreateYtDlpFfmpegResource(st, track.url));
+      logger.info('[MUSIC] yt-dlp+ffmpeg (long-track) stream started for:', track.title);
+      await startPlayback(resource, 'yt-dlp+ffmpeg');
+    } catch (e) {
+      const msg = e?.message || String(e);
+      logger.warn({ err: msg, track: track.title }, '[MUSIC] yt-dlp+ffmpeg long-track strategy failed — falling through to yt-dlp pipe');
+      errors.push('yt-dlp+ffmpeg (long): ' + msg);
+      try { st.player.stop(true); } catch {}
+    }
+  }
+
+  // ── Strategy 1: yt-dlp pipe (best for short/normal tracks) ──────────────
   // Always try yt-dlp first for any URL — it handles YouTube, SoundCloud, and more.
   // ytDlpPool gates concurrent spawns (default: 8 max) to prevent RAM exhaustion
   // when many guilds request tracks simultaneously.
+  // Skipped for long YouTube tracks (handled above by ffmpeg strategy).
+  if (st.player.state.status !== AudioPlayerStatus.Playing) {
   try {
     const resource = await ytDlpPool.run(() => tryCreateYtDlpResource(st, track.url));
     logger.info('[MUSIC] yt-dlp stream started for:', track.title);
@@ -1079,6 +1169,7 @@ async function playTrackInternal(st, track) {
   } catch (err) {
     const msg = err?.message || String(err);
     const isNotFound = err?.code === 'ENOENT' || /ENOENT|not found|not recognized/i.test(msg);
+    const isEndedTooQuickly = msg.includes('ended too quickly');
     cleanupActiveProcess(st);
     try { st.player.stop(true); } catch {}
     if (isNotFound) {
@@ -1087,10 +1178,32 @@ async function playTrackInternal(st, track) {
       logger.warn({ err: msg, track: track.title, url: track.url }, '[MUSIC] yt-dlp failed');
       errors.push('yt-dlp: ' + msg);
     }
-  }
 
-  // ── Strategy 2: play-dl ────────────────────────────────────────────────────
-  // Before play-dl, try a resilient path: yt-dlp direct URL + ffmpeg.
+    // For "ended too quickly" on YouTube: the signed CDN URL likely expired
+    // between yt-dlp resolving it and the first bytes arriving (common for
+    // YouTube Mix/Radio entries and age-restricted content).
+    // Retry once immediately with a fresh spawn — yt-dlp will re-resolve the URL.
+    if (isEndedTooQuickly && isYouTubeUrl(track.url) && st.player.state.status !== AudioPlayerStatus.Playing) {
+      logger.info({ track: track.title }, '[MUSIC] Retrying with fresh yt-dlp spawn (CDN URL may have expired)');
+      try {
+        const resource2 = await ytDlpPool.run(() => tryCreateYtDlpResource(st, track.url));
+        logger.info('[MUSIC] yt-dlp retry stream started for:', track.title);
+        await startPlayback(resource2, 'yt-dlp-retry');
+        // eslint-disable-next-line no-empty
+      } catch (retryErr) {
+        const retryMsg = retryErr?.message || String(retryErr);
+        logger.warn({ err: retryMsg, track: track.title }, '[MUSIC] yt-dlp retry also failed');
+        errors.push('yt-dlp-retry: ' + retryMsg);
+        cleanupActiveProcess(st);
+        try { st.player.stop(true); } catch {}
+      }
+    }
+  }
+  } // end Strategy 1 block
+
+  // ── Strategy 2: yt-dlp direct URL → ffmpeg (fallback for short tracks) ──
+  // Already ran as primary for long tracks above.
+  // For short tracks: runs as fallback if Strategy 1 (yt-dlp pipe) failed.
   if (st.player.state.status !== AudioPlayerStatus.Playing && isYouTubeUrl(track.url)) {
     try {
       const resource = await ytDlpPool.run(() => tryCreateYtDlpFfmpegResource(st, track.url));

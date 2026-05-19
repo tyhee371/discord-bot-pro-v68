@@ -98,6 +98,7 @@ module.exports = {
               `Admin role: ${role(tickets.adminRoleId)}`,
               `Mod role: ${role(tickets.modRoleId)}`,
               `Transcript ch: ${ch(tickets.transcriptChannelId)}`,
+              `Progress ch: ${ch(tickets.progressChannelId)}`,
               `Claim timeout: **${tickets.claimTimeoutSeconds ?? 60}s**`,
             ].join('\n'),
             inline: true,
